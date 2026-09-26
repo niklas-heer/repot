@@ -1,6 +1,6 @@
 # repot build brief
 
-Created 2026-09-26. This document records what repot should become, the rules it must keep, and the order of work. It describes intent, not implemented behaviour: today the binary only prints its version and usage. Update the status section as milestones land.
+Created 2026-09-26. This document records what repot should become, the rules it must keep, and the order of work. Status: milestone 1 is implemented: discovery, listing, deterministic selection and shell integration. Milestones 2–5 below remain planned.
 
 ## Intent
 
