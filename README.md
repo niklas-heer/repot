@@ -4,7 +4,7 @@ Keep every Git repository on a machine organised, current and portable.
 
 repot builds on the [ghq](https://github.com/x-motemen/ghq) directory tree (`<root>/<host>/<owner>/<repo>`). It adds what ghq leaves out: jumping to any repository with a fuzzy picker, safely updating everything at once (including returning to `main` after a branch was merged on GitHub), scratch projects that can be published into the tree later, finding stray repositories, and restoring a machine from a manifest kept in your dotfiles.
 
-> **Status:** milestone 1 is implemented: `list`, `jump`, and `shell-init`. The remaining commands below are planned. See [BUILD_BRIEF.md](BUILD_BRIEF.md) for safety rules and milestones.
+> **Status:** milestones 1–2 are implemented: `list`, `jump`, `shell-init`, `status`, and `sync`. Scratch/publish, adoption/restore and release packaging remain planned. See [BUILD_BRIEF.md](BUILD_BRIEF.md) for safety rules and milestones.
 
 ## Commands (remaining milestones planned)
 
@@ -39,6 +39,31 @@ selection requires `fzf`; scripts must provide an unambiguous query. Without the
 shell wrapper, `jump` prints the selected path. Directory symlinks are not traversed;
 linked worktrees can be discovered or registered, and nested submodules are not
 listed separately.
+
+## Status and safe updates
+
+```sh
+repot status --json
+repot sync --dry-run
+repot sync --jobs 4 --timeout 30
+```
+
+Status fetches the relevant remote for each checkout with bounded parallelism.
+`--no-fetch` uses cached tracking refs. `sync --dry-run` also uses cached refs and
+prints that limitation; it does not fetch, write refs, or change the working tree.
+JSON is a sorted array with `path`, `state`, `action`, `branch`, dirty counts,
+stash count, ahead/behind counts, reason, and whether an action was applied.
+
+Sync only fast-forwards or returns a proven merged branch to the remote default.
+It never pushes, deletes branches, commits, stashes, resets, or rebases. Dirty,
+detached, diverged, unconfigured-upstream, submodule, and in-progress-operation
+checkouts need review. Branch return checks ancestry, patch equivalence after
+pruning, or an exact merged GitHub PR head and default base through optional `gh`.
+An ahead/diverged default branch or one checked out in another worktree blocks
+return. Existing feature branches and their commits are retained.
+
+Exit codes: `0` completed, `1` operational failure, `2` invalid usage, `3` manual
+review or push needed. Failures take precedence over review in a mixed batch.
 
 ## Development
 

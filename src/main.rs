@@ -3,8 +3,11 @@
 mod config;
 mod discovery;
 mod navigation;
+mod process;
+mod status;
+mod sync;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -32,6 +35,42 @@ enum Commands {
     Jump { query: Option<String> },
     /// Print shell integration for nu, zsh, bash or fish.
     ShellInit { shell: String },
+    /// Fetch and report repository states and recommended actions.
+    Status(Inspection),
+    /// Fast-forward safe checkouts and return proven merged branches.
+    Sync {
+        #[command(flatten)]
+        inspection: Inspection,
+        /// Plan against cached remote refs without changing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Debug, Args)]
+struct Inspection {
+    #[arg(long)]
+    json: bool,
+    /// Maximum concurrent repositories.
+    #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u8).range(1..=32))]
+    jobs: u8,
+    /// Network subprocess timeout in seconds.
+    #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..=3600))]
+    timeout: u64,
+    /// Inspect cached remote refs without fetching.
+    #[arg(long)]
+    no_fetch: bool,
+}
+
+impl Inspection {
+    fn options(&self) -> status::Options {
+        status::Options {
+            json: self.json,
+            jobs: usize::from(self.jobs),
+            timeout: std::time::Duration::from_secs(self.timeout),
+            no_fetch: self.no_fetch,
+        }
+    }
 }
 
 fn run(cli: Cli) -> Result<u8> {
@@ -59,6 +98,13 @@ fn run(cli: Cli) -> Result<u8> {
             navigation::jump(&discovery::discover(&config)?, query.as_deref())?;
         }
         Commands::ShellInit { .. } => {}
+        Commands::Status(inspection) => return status::run(&config, &inspection.options()),
+        Commands::Sync {
+            inspection,
+            dry_run,
+        } => {
+            return sync::run(&config, &inspection.options(), dry_run);
+        }
     }
     Ok(0)
 }

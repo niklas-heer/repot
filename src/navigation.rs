@@ -64,7 +64,7 @@ fn pick(candidates: &[&Repository], query: &str) -> Result<()> {
             "--read0",
             "--print0",
             "--no-multi",
-            "--no-sort",
+            "--tiebreak=index",
             "--prompt=repot> ",
             "--query",
             query,
@@ -179,10 +179,10 @@ def --env --wrapped repot [...args: string]: nothing -> nothing {
     let repot_cd_file = (^mktemp -t repot-cd.XXXXXXXX | str trim)
     if $env.LAST_EXIT_CODE != 0 { error make {msg: 'Cannot create repot handoff file'} }
     let repot_result = (try {
-        with-env {REPOT_CD_FILE: $repot_cd_file} { ^repot ...$args | complete }
-    } catch {|err| {stdout: '', stderr: $err.msg, exit_code: 127} })
-    print -n $repot_result.stdout
-    print -e -n $repot_result.stderr
+        with-env {REPOT_CD_FILE: $repot_cd_file} {
+            ^repot ...$args | tee { print -n } | tee --stderr { print -e -n } | complete
+        }
+    } catch {|err| print -e $err.msg; {exit_code: 127} })
     let repot_destination = (try { open --raw $repot_cd_file } catch { '' })
     rm -f $repot_cd_file
     if $repot_result.exit_code == 0 and ($repot_destination | is-not-empty) and ($repot_destination | path type) == 'dir' {
