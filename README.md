@@ -5,6 +5,7 @@
 <p align="center">Keep every Git repository on your machine organised, current and portable.</p>
 
 <p align="center">
+  <a href="https://github.com/niklas-heer/repot/releases/latest"><img src="https://img.shields.io/github/v/release/niklas-heer/repot" alt="Latest release"></a>
   <a href="https://github.com/niklas-heer/repot/actions/workflows/ci.yml"><img src="https://github.com/niklas-heer/repot/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/niklas-heer/repot" alt="MIT license"></a>
 </p>

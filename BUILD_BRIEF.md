@@ -1,6 +1,6 @@
 # repot build brief
 
-Created 2026-09-26. This document records what repot should become, the rules it must keep, and the order of work. Status: all six original implementation milestones are complete. The first release is being prepared with the user-requested KDL and YAML manifest support, agent guidance and a developer-focused documentation pass. Publication is authorized after the full release rehearsal and artifact checks pass.
+Created 2026-09-26. This document records what repot should become, the rules it must keep, and the order of work. Status: all six original implementation milestones are complete. [v0.1.0](https://github.com/niklas-heer/repot/releases/tag/v0.1.0) is published with TOML, KDL and YAML manifests, the bundled agent guide and MCP server, and developer-focused documentation. Native Linux/macOS archives, Nix builds and the generated Homebrew formula passed the release gates.
 
 ## Intent
 
