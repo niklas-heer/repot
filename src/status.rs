@@ -220,6 +220,8 @@ pub fn inspect(path: &Path, config: &Config, options: &Options, fetch: bool) -> 
                 "--prune",
                 "--no-tags",
                 "--no-prune-tags",
+                // Explicit refspecs alone still honor configured opportunistic
+                // mappings, which can target local branches. Clear those too.
                 "--refmap=",
                 "--no-recurse-submodules",
                 "--",

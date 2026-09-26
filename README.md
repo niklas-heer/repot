@@ -4,7 +4,7 @@ Keep every Git repository on a machine organised, current and portable.
 
 repot builds on the [ghq](https://github.com/x-motemen/ghq) directory tree (`<root>/<host>/<owner>/<repo>`). It adds what ghq leaves out: jumping to any repository with a fuzzy picker, safely updating everything at once (including returning to `main` after a branch was merged on GitHub), scratch projects that can be published into the tree later, finding stray repositories, and restoring a machine from a manifest kept in your dotfiles.
 
-> **Status:** milestones 1–2 are implemented: `list`, `jump`, `shell-init`, `status`, and `sync`. Scratch/publish, adoption/restore and release packaging remain planned. See [BUILD_BRIEF.md](BUILD_BRIEF.md) for safety rules and milestones.
+> **Status:** milestones 1–3 are implemented: discovery, navigation, status, safe sync, scratch creation and GitHub/GitLab publishing. Adoption/restore and release packaging remain planned. See [BUILD_BRIEF.md](BUILD_BRIEF.md) for safety rules and milestones.
 
 ## Commands (remaining milestones planned)
 
@@ -64,6 +64,36 @@ return. Existing feature branches and their commits are retained.
 
 Exit codes: `0` completed, `1` operational failure, `2` invalid usage, `3` manual
 review or push needed. Failures take precedence over review in a mixed batch.
+
+## Scratch projects and publishing
+
+```sh
+repot new experiment                  # <primary-root>/local/scratch/experiment
+repot new experiment --namespace me --dry-run
+# Commit manually when ready, then preview and publish:
+repot publish owner/experiment --visibility public --dry-run
+repot publish owner/experiment --visibility public
+repot publish group/project --forge gitlab --visibility private
+# Use --host gitlab.example.com for a self-hosted forge.
+```
+
+Publishing requires a clean committed branch, an authenticated `gh` or `glab`, an
+explicit target and visibility, and a free destination. It pushes only the inspected
+current-branch commit, without force or automatic tags, verifies the remote tip,
+then moves the checkout. Existing branches and ignored local files move with it.
+`--timeout` bounds forge and Git calls (120 seconds by default). Dry-run performs
+read-only prerequisite checks without creating, pushing or moving anything.
+
+After a failed push or move, review the reported state and retry the same command
+with `--resume`. Resume requires a matching origin and remote visibility. If remote
+creation succeeded before origin could be configured, verify the remote and add
+that origin manually first. repot never deletes remote or local progress to roll
+back a partial publication.
+
+Scratch creation and relocation refuse all existing destination paths, including
+symlinks and concurrent collisions. Moves are atomic within one filesystem;
+checkouts with linked worktrees, submodules, borrowed object databases or separate
+worktree configuration require manual handling or registration in place.
 
 ## Development
 

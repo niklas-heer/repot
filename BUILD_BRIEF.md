@@ -1,6 +1,6 @@
 # repot build brief
 
-Created 2026-09-26. This document records what repot should become, the rules it must keep, and the order of work. Status: milestones 1–2 are implemented: discovery, navigation, status and safe sync. Milestones 3–5 below remain planned.
+Created 2026-09-26. This document records what repot should become, the rules it must keep, and the order of work. Status: milestones 1–3 are implemented: discovery, navigation, status, safe sync, scratch creation and publishing. Milestones 4–5 below remain planned.
 
 ## Intent
 

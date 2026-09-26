@@ -2,8 +2,10 @@
 
 mod config;
 mod discovery;
+mod lifecycle;
 mod navigation;
 mod process;
+mod publish;
 mod status;
 mod sync;
 
@@ -35,6 +37,16 @@ enum Commands {
     Jump { query: Option<String> },
     /// Print shell integration for nu, zsh, bash or fish.
     ShellInit { shell: String },
+    /// Create a scratch checkout without a remote or commit.
+    New {
+        name: String,
+        #[arg(long, default_value = "scratch")]
+        namespace: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Create a forge repository, push the current branch, and move the checkout.
+    Publish(publish::Options),
     /// Fetch and report repository states and recommended actions.
     Status(Inspection),
     /// Fast-forward safe checkouts and return proven merged branches.
@@ -98,6 +110,14 @@ fn run(cli: Cli) -> Result<u8> {
             navigation::jump(&discovery::discover(&config)?, query.as_deref())?;
         }
         Commands::ShellInit { .. } => {}
+        Commands::New {
+            name,
+            namespace,
+            dry_run,
+        } => {
+            lifecycle::new_project(&config, &name, &namespace, dry_run)?;
+        }
+        Commands::Publish(options) => return publish::run(&config, &options),
         Commands::Status(inspection) => return status::run(&config, &inspection.options()),
         Commands::Sync {
             inspection,
