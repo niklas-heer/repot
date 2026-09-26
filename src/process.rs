@@ -5,8 +5,35 @@ use std::ffi::OsStr;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock, mpsc};
 use std::time::{Duration, Instant};
+
+static CANCELLATION: OnceLock<Result<Arc<AtomicBool>>> = OnceLock::new();
+
+/// Register once before starting CLI work so subprocesses can unwind on signals.
+pub fn install_cancellation() -> Result<()> {
+    CANCELLATION
+        .get_or_init(|| {
+            let cancelled = Arc::new(AtomicBool::new(false));
+            #[cfg(unix)]
+            for signal in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT] {
+                signal_hook::flag::register(signal, Arc::clone(&cancelled))
+                    .map_err(|_| "cannot install cancellation handler".to_owned())?;
+            }
+            Ok(cancelled)
+        })
+        .as_ref()
+        .map(|_| ())
+        .map_err(Clone::clone)
+}
+
+fn cancellation_requested() -> bool {
+    CANCELLATION
+        .get()
+        .and_then(|result| result.as_ref().ok())
+        .is_some_and(|cancelled| cancelled.load(Ordering::Relaxed))
+}
 
 pub struct Output {
     pub success: bool,
@@ -75,6 +102,9 @@ fn command(program: &str, args: &[&OsStr], path: &Path) -> Command {
 }
 
 pub fn run(program: &str, args: &[&OsStr], path: &Path, timeout: Duration) -> Result<Output> {
+    if cancellation_requested() {
+        return Err("operation cancelled".into());
+    }
     let mut child = command(program, args, path)
         .spawn()
         .map_err(|error| format!("cannot run {program}: {error}"))?;
@@ -102,6 +132,10 @@ pub fn run(program: &str, args: &[&OsStr], path: &Path, timeout: Duration) -> Re
     let mut status = None;
     let mut output = None;
     loop {
+        if cancellation_requested() {
+            terminate(&mut child);
+            return Err("operation cancelled".into());
+        }
         if status.is_none() {
             match child.try_wait() {
                 Ok(value) => status = value,

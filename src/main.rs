@@ -9,6 +9,7 @@ mod git_read;
 mod lifecycle;
 mod manifest;
 mod manifest_format;
+mod mcp;
 mod navigation;
 mod process;
 mod publish;
@@ -19,6 +20,7 @@ mod status;
 mod sync;
 
 use clap::{Args, CommandFactory, Parser, Subcommand};
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -38,7 +40,7 @@ pub(crate) type Result<T> = std::result::Result<T, String>;
 struct Cli {
     #[arg(short = 'v', long = "version", visible_short_alias = 'V', global = true, action = clap::ArgAction::Version)]
     _version: Option<bool>,
-    /// Manifest location (.kdl selects KDL; otherwise TOML). Auto-detects repos.toml or repos.kdl.
+    /// Manifest location (.kdl selects KDL, .yaml/.yml selects YAML; otherwise TOML).
     #[arg(long, global = true)]
     manifest: Option<PathBuf>,
     #[command(subcommand)]
@@ -47,6 +49,10 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Serve typed repository tools over MCP stdio for coding agents.
+    Mcp,
+    /// Print the bundled agent guide with automation examples and safety rules.
+    AgentGuide,
     /// Print shell completions without changing shell configuration.
     Completions {
         #[arg(value_enum)]
@@ -162,6 +168,14 @@ impl Inspection {
 
 fn run(cli: Cli) -> Result<u8> {
     match &cli.command {
+        Commands::Mcp => return mcp::run(cli.manifest.clone()),
+        Commands::AgentGuide => {
+            std::io::stdout()
+                .lock()
+                .write_all(include_bytes!("../docs/agents.md"))
+                .map_err(|error| format!("cannot print agent guide: {error}"))?;
+            return Ok(0);
+        }
         Commands::ShellInit { shell } => {
             navigation::shell_init(shell)?;
             return Ok(0);
@@ -176,6 +190,7 @@ fn run(cli: Cli) -> Result<u8> {
         }
         _ => {}
     }
+    process::install_cancellation()?;
     let config = if matches!(cli.command, Commands::Adopt { .. } | Commands::Migrate(_)) {
         config::Config::load_for_write(cli.manifest.as_deref())?
     } else {
@@ -192,7 +207,11 @@ fn run(cli: Cli) -> Result<u8> {
         Commands::Jump { query } => {
             navigation::jump(&discovery::discover(&config)?, query.as_deref())?;
         }
-        Commands::ShellInit { .. } | Commands::Completions { .. } | Commands::Help { .. } => {}
+        Commands::Mcp
+        | Commands::AgentGuide
+        | Commands::ShellInit { .. }
+        | Commands::Completions { .. }
+        | Commands::Help { .. } => {}
         Commands::New {
             name,
             namespace,

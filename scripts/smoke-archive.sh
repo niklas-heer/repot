@@ -17,12 +17,15 @@ temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' EXIT HUP INT TERM
 tar -xzf "$assets/$archive" -C "$temporary"
 test "$("$temporary/repot" --version)" = "repot $version"
+"$temporary/repot" agent-guide > "$temporary/bundled-guide.md"
+cmp "$temporary/docs/agents.md" "$temporary/bundled-guide.md"
 mkdir -p "$temporary/home" "$temporary/projects" "$temporary/config"
 printf '[settings]\nowners = ["release-smoke"]\n' > "$temporary/config/repos.toml"
 printf 'settings { owners "release-smoke"; }\n' > "$temporary/config/repos.kdl"
+printf 'settings:\n  owners: [release-smoke]\n' > "$temporary/config/repos.yaml"
 (
   cd "$temporary"
-  for format in toml kdl; do
+  for format in toml kdl yaml; do
     result=$(env HOME="$temporary/home" XDG_CONFIG_HOME="$temporary/config" \
       GHQ_ROOT="$temporary/projects" GIT_CONFIG_NOSYSTEM=1 \
       GIT_CONFIG_GLOBAL="$temporary/gitconfig" \
@@ -30,4 +33,4 @@ printf 'settings { owners "release-smoke"; }\n' > "$temporary/config/repos.kdl"
     test "$result" = '[]'
   done
 )
-printf 'Verified repot %s archive for %s, including TOML and KDL configuration\n' "$version" "$target"
+printf 'Verified repot %s archive for %s, including TOML, KDL and YAML configuration\n' "$version" "$target"

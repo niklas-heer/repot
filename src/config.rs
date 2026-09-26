@@ -156,15 +156,17 @@ fn default_manifest(home: &Path) -> Result<PathBuf> {
     let directory = env::var_os("XDG_CONFIG_HOME")
         .map_or_else(|| home.join(".config"), PathBuf::from)
         .join("repot");
-    let toml = directory.join("repos.toml");
-    let kdl = directory.join("repos.kdl");
-    match (manifest_exists(&toml)?, manifest_exists(&kdl)?) {
-        (true, true) => {
-            Err("both repos.toml and repos.kdl exist; choose one with --manifest".into())
+    let mut selected = None;
+    for name in ["repos.toml", "repos.kdl", "repos.yaml", "repos.yml"] {
+        let candidate = directory.join(name);
+        if manifest_exists(&candidate)? {
+            if selected.is_some() {
+                return Err("multiple default manifests exist; choose one with --manifest".into());
+            }
+            selected = Some(candidate);
         }
-        (false, true) => Ok(kdl),
-        _ => Ok(toml),
     }
+    Ok(selected.unwrap_or_else(|| directory.join("repos.toml")))
 }
 
 fn manifest_exists(path: &Path) -> Result<bool> {

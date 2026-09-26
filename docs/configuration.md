@@ -32,7 +32,7 @@ for SSH, GitHub/GitLab, vanity and AWS CodeCommit behavior.
 
 ## Choose a manifest
 
-Keep the repositories you want to restore in your dotfiles. TOML and KDL v2
+Keep the repositories you want to restore in your dotfiles. TOML, KDL v2 and YAML
 represent the same settings and repository entries.
 
 Default directory: `$XDG_CONFIG_HOME/repot/`, or `~/.config/repot/` when
@@ -42,18 +42,19 @@ Default directory: `$XDG_CONFIG_HOME/repot/`, or `~/.config/repot/` when
 | --- | --- |
 | Only `repos.toml` | TOML |
 | Only `repos.kdl` | KDL v2 |
-| Both | An error; choose one explicitly with `--manifest PATH`. |
-| Neither | `repos.toml` is the default when registration creates a manifest. |
+| Only `repos.yaml` or only `repos.yml` | YAML |
+| More than one default file | An error; choose one explicitly with `--manifest PATH`. |
+| None | `repos.toml` is the default when registration creates a manifest. |
 
 ```sh
 repot --manifest ~/dotfiles/repos.kdl restore --dry-run
 repot adopt ~/Downloads/project --manifest ~/dotfiles/repos.toml
 ```
 
-An explicit logical filename ending in `.kdl` selects KDL v2. Other filenames,
-including extensionless paths, retain TOML behavior for compatibility. If the
-manifest is a symlink, its logical filename controls the format, not the target's
-extension. YAML is not a manifest format.
+An explicit logical filename ending in `.kdl` selects KDL v2; `.yaml` and `.yml`
+select YAML. Other filenames, including extensionless paths, retain TOML behavior
+for compatibility. If the manifest is a symlink, its logical filename controls
+the format, not the target's extension.
 
 ### TOML
 
@@ -85,6 +86,24 @@ KDL URLs are positional arguments on `repo` nodes. KDL v2 booleans use `#true`
 and `#false`. Unknown fields, duplicate settings/properties and incorrect types
 are rejected instead of silently ignored.
 
+### YAML
+
+```yaml
+settings:
+  owners: [your-name, your-team]
+
+repo:
+  - url: https://github.com/your-name/project
+  - url: https://github.com/your-name/dotfiles
+    path: ~/.local/share/chezmoi
+    restore: false
+```
+
+YAML accepts block and flow mappings in a single document. Unknown fields,
+duplicate keys and incorrect types are rejected. Directives, tags, anchors, aliases and merge
+keys are not supported; keep entries explicit so registration can preserve them
+without resolving indirection.
+
 ### Entry fields
 
 | Field | Meaning |
@@ -100,7 +119,7 @@ home-relative paths when possible. Never place credentials in a URL or manifest.
 
 ## Editing and dotfiles
 
-You can edit either format by hand. `adopt` and `migrate` register repositories
+You can edit any of the three formats by hand. `adopt` and `migrate` register repositories
 while preserving existing comments. A symlinked manifest is updated at its
 dotfiles target without replacing the symlink. A persistent companion `.lock`
 file serializes concurrent registrations; updates re-read and atomically replace

@@ -1,4 +1,4 @@
-//! TOML/KDL parity, safe persistent edits, and reproducible editing sequences.
+//! TOML/KDL/YAML parity, safe persistent edits, and reproducible editing sequences.
 
 #[cfg(test)]
 mod tests {
@@ -12,6 +12,7 @@ mod tests {
     enum Format {
         Toml,
         Kdl,
+        Yaml,
     }
 
     impl Format {
@@ -19,13 +20,14 @@ mod tests {
             match self {
                 Self::Toml => "toml",
                 Self::Kdl => "kdl",
+                Self::Yaml => "yaml",
             }
         }
         fn comment(self, text: &str) -> String {
             format!(
                 "{} {text}\n",
                 match self {
-                    Self::Toml => "#",
+                    Self::Toml | Self::Yaml => "#",
                     Self::Kdl => "//",
                 }
             )
@@ -33,11 +35,24 @@ mod tests {
         fn settings(self, owners: &[&str]) -> String {
             let names = owners.iter().map(|owner| quote(owner)).collect::<Vec<_>>();
             match self {
+                Self::Yaml => format!("settings:\n  owners: [{}] # owner note\n", names.join(", ")),
                 Self::Toml => format!("[settings]\nowners = [{}] # owner note\n", names.join(", ")),
                 Self::Kdl => format!(
                     "settings {{\n    owners {} // owner note\n}}\n",
                     names.join(" ")
                 ),
+            }
+        }
+        fn document(self, source: &str) -> String {
+            // YAML has one sequence header, unlike repeated TOML/KDL entries.
+            if matches!(self, Self::Yaml) {
+                source.replacen(
+                    "\n  # repository note\n",
+                    "\nrepo:\n  # repository note\n",
+                    1,
+                )
+            } else {
+                source.to_owned()
             }
         }
         fn repo(self, url: &str, path: Option<&str>, restore: Option<bool>) -> String {
@@ -47,17 +62,26 @@ mod tests {
                     quote(url)
                 ),
                 Self::Kdl => format!("\nrepo {} /* URL note */", quote(url)),
+                Self::Yaml => format!(
+                    "\n  # repository note\n  - url: {} # URL note\n",
+                    quote(url)
+                ),
             };
             if let Some(path) = path {
                 match self {
                     Self::Toml => writeln!(text, "path = {}", quote(path)).expect("TOML path"),
                     Self::Kdl => write!(text, " path={}", quote(path)).expect("KDL path"),
+                    Self::Yaml => writeln!(text, "    path: {}", quote(path)).expect("YAML path"),
                 }
             }
             if let Some(restore) = restore {
                 match self {
                     Self::Toml => {
                         writeln!(text, "restore = {restore} # restore note").expect("TOML restore");
+                    }
+                    Self::Yaml => {
+                        writeln!(text, "    restore: {restore} # restore note")
+                            .expect("YAML restore");
                     }
                     Self::Kdl => {
                         write!(text, " restore=#{restore} /* restore note */")
@@ -169,7 +193,7 @@ mod tests {
         fn write(&self, format: Format, contents: &str) -> PathBuf {
             let path = self.manifest(format);
             fs::create_dir_all(path.parent().expect("manifest parent")).expect("config directory");
-            fs::write(&path, contents).expect("manifest");
+            fs::write(&path, format.document(contents)).expect("manifest");
             path
         }
         fn listed(&self, manifest: Option<&Path>) -> BTreeSet<PathBuf> {
@@ -214,8 +238,8 @@ mod tests {
     }
 
     #[test]
-    fn automatic_discovery_reads_either_format_and_expands_paths_identically() {
-        for format in [Format::Toml, Format::Kdl] {
+    fn automatic_discovery_reads_each_format_and_expands_paths_identically() {
+        for format in [Format::Toml, Format::Kdl, Format::Yaml] {
             let world = World::new();
             let expected: BTreeSet<_> =
                 ["relative", "home", "expanded", "cash$dollar", "line\nfeed"]
@@ -255,6 +279,10 @@ mod tests {
             Format::Kdl,
             &Format::Kdl.repo("", Some("~/two"), Some(false)),
         );
+        let yaml = world.write(
+            Format::Yaml,
+            &Format::Yaml.repo("", Some("~/one"), Some(false)),
+        );
         let before = world.snapshot();
         for args in [vec!["list", "--json"], vec!["adopt", "third", "--register"]] {
             let output = world.run(None, &args);
@@ -262,25 +290,54 @@ mod tests {
             assert!(String::from_utf8_lossy(&output.stderr).contains("--manifest"));
             assert_eq!(world.snapshot(), before);
         }
-        assert_eq!(world.listed(Some(&toml)), BTreeSet::from([one]));
+        assert_eq!(world.listed(Some(&toml)), BTreeSet::from([one.clone()]));
         assert_eq!(world.listed(Some(&kdl)), BTreeSet::from([two]));
+        assert_eq!(world.listed(Some(&yaml)), BTreeSet::from([one]));
         let original_toml = fs::read(&toml).expect("TOML");
+        let original_yaml = fs::read(&yaml).expect("YAML");
         success(&world.run(Some(&kdl), &["adopt", "third", "--register"]));
         assert_eq!(fs::read(&toml).expect("unchanged TOML"), original_toml);
+        assert_eq!(fs::read(&yaml).expect("unchanged YAML"), original_yaml);
         assert_eq!(world.listed(Some(&kdl)).len(), 2);
     }
 
     #[test]
-    fn new_default_stays_toml_and_explicit_kdl_or_legacy_extensions_work() {
+    fn yml_default_alias_is_discovered_and_conflicting_formats_fail_closed() {
+        for other in [Format::Toml, Format::Kdl, Format::Yaml] {
+            let world = World::new();
+            let expected = world.init("stray", None);
+            let yaml = world.write(
+                Format::Yaml,
+                &Format::Yaml.repo("", Some("~/stray"), Some(false)),
+            );
+            let alias = yaml.with_extension("yml");
+            fs::rename(yaml, &alias).expect("YML alias");
+            assert_eq!(world.listed(None), BTreeSet::from([expected.clone()]));
+            world.write(other, &other.comment("second default"));
+            let before = world.snapshot();
+            for args in [vec!["list", "--json"], vec!["adopt", "stray", "--register"]] {
+                assert!(!world.run(None, &args).status.success());
+                assert_eq!(world.snapshot(), before);
+            }
+            assert_eq!(world.listed(Some(&alias)), BTreeSet::from([expected]));
+        }
+    }
+
+    #[test]
+    fn new_default_stays_toml_and_explicit_formats_or_legacy_extensions_work() {
         let world = World::new();
         let repo = world.init("stray", None);
         success(&world.run(None, &["adopt", "stray", "--register"]));
         assert!(world.manifest(Format::Toml).is_file());
         assert!(!world.manifest(Format::Kdl).exists());
-        let custom = world.path("custom/new.kdl");
-        success(&world.run(Some(&custom), &["adopt", "stray", "--register"]));
-        assert!(fs::read_to_string(&custom).expect("KDL").contains("repo "));
-        assert_eq!(world.listed(Some(&custom)), BTreeSet::from([repo.clone()]));
+        assert!(!world.manifest(Format::Yaml).exists());
+        for suffix in ["kdl", "yaml", "yml"] {
+            let custom = world.path(&format!("custom/new.{suffix}"));
+            success(&world.run(Some(&custom), &["adopt", "stray", "--register"]));
+            assert_eq!(world.listed(Some(&custom)), BTreeSet::from([repo.clone()]));
+            let contents = fs::read_to_string(&custom).expect("explicit format");
+            assert!(contents.contains(if suffix == "kdl" { "repo " } else { "repo:" }));
+        }
         let legacy = world.path("legacy-config");
         fs::write(&legacy, Format::Toml.repo("", Some("~/stray"), Some(false)))
             .expect("legacy TOML");
@@ -288,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn owners_and_status_actions_are_equivalent_in_both_formats() {
+    fn owners_and_status_actions_are_equivalent_in_all_formats() {
         let world = World::new();
         let repo = world.init("checkout", Some("https://example.test/alice/project"));
         world.commit(&repo, "base");
@@ -306,7 +363,7 @@ mod tests {
         world.git(&repo, &["config", "branch.main.merge", "refs/heads/main"]);
         world.commit(&repo, "ahead");
         let mut observations = Vec::new();
-        for format in [Format::Toml, Format::Kdl] {
+        for format in [Format::Toml, Format::Kdl, Format::Yaml] {
             let manifest = world.write(
                 format,
                 &(format.settings(&["alice"])
@@ -323,7 +380,7 @@ mod tests {
             assert_eq!(rows[0]["action"], "push");
             observations.push(rows);
         }
-        assert_eq!(observations[0], observations[1]);
+        assert!(observations.windows(2).all(|pair| pair[0] == pair[1]));
     }
 
     #[test]
@@ -376,8 +433,8 @@ mod tests {
     }
 
     #[test]
-    fn upsert_preserves_comments_choices_and_idempotency_in_both_formats() {
-        for format in [Format::Toml, Format::Kdl] {
+    fn upsert_preserves_comments_choices_and_idempotency_in_all_formats() {
+        for format in [Format::Toml, Format::Kdl, Format::Yaml] {
             let world = World::new();
             let url = "https://example.test/team/project";
             world.init("stray", Some(url));
@@ -421,7 +478,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn symlink_logical_extension_and_relative_paths_survive_edits() {
-        for format in [Format::Toml, Format::Kdl] {
+        for format in [Format::Toml, Format::Kdl, Format::Yaml] {
             let world = World::new();
             let registered = world.init("relative", None);
             let next = world.init("next", None);
@@ -429,14 +486,16 @@ mod tests {
                 "dotfiles/manifest.{}",
                 match format {
                     Format::Toml => "kdl",
-                    Format::Kdl => "toml",
+                    Format::Kdl | Format::Yaml => "toml",
                 }
             ));
             fs::create_dir_all(target.parent().expect("dotfiles")).expect("dotfiles directory");
             fs::write(
                 &target,
-                format.comment("dotfile comment")
-                    + &format.repo("", Some("../../relative"), Some(false)),
+                format.document(
+                    &(format.comment("dotfile comment")
+                        + &format.repo("", Some("../../relative"), Some(false))),
+                ),
             )
             .expect("dotfile");
             let logical = world.manifest(format);
@@ -460,7 +519,7 @@ mod tests {
 
     #[test]
     fn concurrent_registrations_keep_every_entry_in_each_format() {
-        for format in [Format::Toml, Format::Kdl] {
+        for format in [Format::Toml, Format::Kdl, Format::Yaml] {
             let world = World::new();
             let manifest = world.write(format, &format.comment("concurrent edits"));
             let expected: BTreeSet<_> = (0..6)
@@ -491,8 +550,8 @@ mod tests {
     }
 
     #[test]
-    fn dry_runs_leave_every_byte_unchanged_in_both_formats() {
-        for format in [Format::Toml, Format::Kdl] {
+    fn dry_runs_leave_every_byte_unchanged_in_all_formats() {
+        for format in [Format::Toml, Format::Kdl, Format::Yaml] {
             let world = World::new();
             world.init("stray", Some("https://example.test/team/project"));
             let manifest = world.write(
@@ -513,7 +572,7 @@ mod tests {
 
     #[test]
     fn credential_bearing_urls_are_rejected_without_disclosure_or_side_effects() {
-        for format in [Format::Toml, Format::Kdl] {
+        for format in [Format::Toml, Format::Kdl, Format::Yaml] {
             let world = World::new();
             world.init("stray", None);
             world.write(
@@ -545,7 +604,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn dangling_default_symlinks_fail_closed_without_creating_another_manifest() {
-        for format in [Format::Toml, Format::Kdl] {
+        for format in [Format::Toml, Format::Kdl, Format::Yaml] {
             let world = World::new();
             world.init("stray", None);
             let logical = world.manifest(format);
@@ -591,7 +650,7 @@ mod tests {
 
     #[test]
     fn local_remote_restore_and_duplicate_discovery_match_between_formats() {
-        for format in [Format::Toml, Format::Kdl] {
+        for format in [Format::Toml, Format::Kdl, Format::Yaml] {
             let world = World::new();
             let seed = world.init("seed", None);
             world.commit(&seed, "content");
@@ -628,15 +687,15 @@ mod tests {
             );
             assert_eq!(
                 fs::read_to_string(&manifest).expect("unchanged manifest"),
-                source
+                format.document(&source)
             );
         }
     }
 
     #[test]
-    fn seeded_persistent_edit_sequences_match_the_same_model_in_both_formats() {
+    fn seeded_persistent_edit_sequences_match_the_same_model_in_all_formats() {
         for seed in [3_u64, 17, 91] {
-            for format in [Format::Toml, Format::Kdl] {
+            for format in [Format::Toml, Format::Kdl, Format::Yaml] {
                 let world = World::new();
                 let manifest = world.write(format, &format.comment("simulation sentinel"));
                 let repos: Vec<_> = (0..4)

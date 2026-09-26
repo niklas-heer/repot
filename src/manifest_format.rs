@@ -8,12 +8,13 @@ use crate::Result;
 use crate::config::{Manifest, RepoEntry};
 
 mod kdl_format;
+mod yaml_format;
 
 pub fn parse(path: &Path, text: &str) -> Result<Manifest> {
-    if is_kdl(path) {
-        kdl_format::parse(text)
-    } else {
-        toml::from_str(text).map_err(|_| "invalid TOML manifest".into())
+    match path.extension().and_then(std::ffi::OsStr::to_str) {
+        Some("kdl") => kdl_format::parse(text),
+        Some("yaml" | "yml") => yaml_format::parse(text),
+        _ => toml::from_str(text).map_err(|_| "invalid TOML manifest".into()),
     }
 }
 
@@ -23,15 +24,11 @@ pub fn edit(
     matching: Option<usize>,
     entry: &RepoEntry,
 ) -> Result<String> {
-    if is_kdl(path) {
-        kdl_format::edit(original, matching, entry)
-    } else {
-        edit_toml(original, matching, entry)
+    match path.extension().and_then(std::ffi::OsStr::to_str) {
+        Some("kdl") => kdl_format::edit(original, matching, entry),
+        Some("yaml" | "yml") => yaml_format::edit(original, matching, entry),
+        _ => edit_toml(original, matching, entry),
     }
-}
-
-fn is_kdl(path: &Path) -> bool {
-    path.extension().is_some_and(|extension| extension == "kdl")
 }
 
 fn edit_toml(original: &str, matching: Option<usize>, entry: &RepoEntry) -> Result<String> {

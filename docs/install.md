@@ -64,7 +64,8 @@ install -m 755 repot ~/.local/bin/repot
 
 On Linux, select your archive’s line from `SHA256SUMS` and pipe it to `sha256sum -c -`. Ensure
 `~/.local/bin` is on your `PATH`. Archives include the README, license, icon and
-user documentation. The release also contains aggregate `SHA256SUMS` and a
+user documentation, including TOML, KDL and YAML configuration examples and an
+agent integration guide. The release also contains aggregate `SHA256SUMS` and a
 `repot.rb` Homebrew formula.
 
 ## Build from source

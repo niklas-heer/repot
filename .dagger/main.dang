@@ -12,6 +12,7 @@ type RepotCi {
     "!mise.lock",
     "!.config",
     "!src",
+    "!vendor",
     "!tests",
     "!examples",
     "!assets",

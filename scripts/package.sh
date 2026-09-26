@@ -36,8 +36,10 @@ cp LICENSE README.md "$stage/"
 mkdir "$stage/assets"
 cp assets/repot.png "$stage/assets/"
 cp -R docs "$stage/docs"
+mkdir -p "$stage/vendor/yaml-edit"
+cp vendor/yaml-edit/LICENSE vendor/yaml-edit/REPOT_PATCH.md "$stage/vendor/yaml-edit/"
 archive="repot-$version-$target.tar.gz"
-tar -czf "$destination/$archive" -C "$stage" repot LICENSE README.md assets/repot.png docs
+tar -czf "$destination/$archive" -C "$stage" repot LICENSE README.md assets/repot.png docs vendor/yaml-edit/LICENSE vendor/yaml-edit/REPOT_PATCH.md
 (
   cd "$destination"
   if command -v sha256sum >/dev/null 2>&1; then

@@ -90,10 +90,17 @@ mod tests {
 
     fn packaged_files() -> Vec<String> {
         let base = root();
-        let mut files: Vec<String> = ["LICENSE", "README.md", "assets/repot.png", "repot"]
-            .into_iter()
-            .map(str::to_owned)
-            .collect();
+        let mut files: Vec<String> = [
+            "LICENSE",
+            "README.md",
+            "assets/repot.png",
+            "repot",
+            "vendor/yaml-edit/LICENSE",
+            "vendor/yaml-edit/REPOT_PATCH.md",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
         let mut directories = vec![base.join("docs")];
         while let Some(directory) = directories.pop() {
             for entry in fs::read_dir(directory).expect("documentation directory") {

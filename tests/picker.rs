@@ -296,6 +296,57 @@ mod tests {
     }
 
     #[test]
+    fn repeated_resize_and_batched_input_preserve_every_query() {
+        let fixture = Fixture::new();
+        fixture.repo("alpha");
+        let wanted = fixture.repo("beta");
+        let mut terminal = fixture.terminal(
+            "bash",
+            "\nrepot jump no-match > result\nprintf REPOT_TEST_DONE\n",
+            false,
+        );
+        terminal.until(b"matches.");
+        for _ in 0..16 {
+            terminal.output.clear();
+            terminal
+                .master
+                .resize(PtySize {
+                    rows: 5,
+                    cols: 20,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .expect("shrink PTY");
+            terminal.until(b"Resize");
+            terminal.output.clear();
+            terminal
+                .master
+                .resize(PtySize {
+                    rows: 30,
+                    cols: 120,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .expect("grow PTY");
+            // Queue the whole edit alongside SIGWINCH, without waiting for the
+            // resize event to drain or resending input to wake a stuck reader.
+            terminal.send(b"\x15beta");
+            // The query cursor is emitted after rendering: at width 120 the
+            // centered panel starts in column 6, and beta ends in column 11.
+            terminal.until(b"\x1b[4;11H");
+            terminal.output.clear();
+            terminal.send(b"\x15no-match");
+            terminal.until(b"\x1b[4;15H");
+        }
+        terminal.send(b"\x15beta\r");
+        terminal.finish();
+        assert_eq!(
+            fs::read(fixture.home.path().join("result")).expect("selection"),
+            [wanted.as_os_str().as_encoded_bytes(), b"\n"].concat()
+        );
+    }
+
+    #[test]
     fn external_interrupts_restore_terminal_without_selecting() {
         for signal in [
             nix::sys::signal::Signal::SIGINT,

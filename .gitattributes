@@ -1,0 +1,2 @@
+# Preserve upstream YAML fixtures and Markdown hard breaks verbatim.
+vendor/yaml-edit/src/** -whitespace

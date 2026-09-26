@@ -31,3 +31,10 @@ Crossterm event source before the first frame and compare rendered dimensions
 against the terminal size to handle a resize during startup. These behaviors are
 covered by [real PTY tests](../tests/picker.rs); recheck them when upgrading the
 terminal dependencies.
+
+The first release rehearsal exposed stalled keyboard input after resizing on
+both macOS and Linux Nix. Crossterm 0.29's Mio backend can discard a ready keyboard
+event when it returns a resize event from the same poll batch. Enable its
+`use-dev-tty` backend, which uses level-triggered Unix polling. The original
+failure test and a repeated resize/edit regression run without input retries;
+1,600 coordinated cycles passed locally after this change.

@@ -37,7 +37,15 @@ mod tests {
                 String::from_utf8_lossy(&output.stderr)
             );
             let text = String::from_utf8(output.stdout).expect("completion UTF-8");
-            for command in ["get", "create", "jump", "trash", "publish", "completions"] {
+            for command in [
+                "get",
+                "create",
+                "jump",
+                "trash",
+                "publish",
+                "completions",
+                "agent-guide",
+            ] {
                 assert!(text.contains(command), "{shell} includes {command}");
             }
             let path = home.path().join(format!("repot.{shell}"));
@@ -94,6 +102,20 @@ mod tests {
     #[test]
     fn version_and_help_aliases_work_without_loading_manifest() {
         let home = tempfile::tempdir().expect("temporary home");
+        let manifest = home.path().join("broken.toml");
+        fs::write(&manifest, "broken = [").expect("invalid manifest");
+        let guide = run(
+            home.path(),
+            &[
+                "--manifest",
+                manifest.to_str().expect("path"),
+                "agent-guide",
+            ],
+        );
+        assert!(guide.status.success());
+        let guide = String::from_utf8(guide.stdout).expect("agent guide UTF-8");
+        assert!(guide.contains("--dry-run"));
+        assert!(guide.contains("--json"));
         for flag in ["-v", "-V", "--version"] {
             let output = run(home.path(), &["--manifest", "/missing/manifest", flag]);
             assert!(output.status.success(), "{flag}");

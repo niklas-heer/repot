@@ -144,9 +144,9 @@ Restoration refuses an occupied destination.
 
 ## Keep a portable manifest
 
-Choose **TOML or KDL v2** in `$XDG_CONFIG_HOME/repot/` (usually `~/.config/repot/`).
-repot detects `repos.toml` or `repos.kdl`; if both exist, select one with
-`--manifest PATH`.
+Choose **TOML, KDL v2 or YAML** in `$XDG_CONFIG_HOME/repot/` (usually `~/.config/repot/`).
+repot detects `repos.toml`, `repos.kdl`, `repos.yaml` or `repos.yml`. If more than
+one exists, select one with `--manifest PATH`.
 
 <details>
 <summary><strong>TOML — repos.toml</strong></summary>
@@ -178,15 +178,39 @@ repo "https://github.com/your-name/dotfiles" path="~/.local/share/chezmoi" resto
 
 </details>
 
+<details>
+<summary><strong>YAML — repos.yaml</strong></summary>
+
+```yaml
+settings:
+  owners: [your-name]
+
+repo:
+  - url: https://github.com/your-name/project
+  - url: https://github.com/your-name/dotfiles
+    path: ~/.local/share/chezmoi
+    restore: false
+```
+
+</details>
+
 `path` is optional; `restore` defaults to true. Registration preserves comments
 and follows symlinks into your dotfiles. [Configuration reference →](docs/configuration.md)
+
+## Working with agents
+
+Run `repot agent-guide` for an offline guide to noninteractive commands, JSON
+reports, exit codes and safe automation. Agents can also connect through the
+local stdio MCP server with `repot mcp`. See the [agent guide](docs/agents.md) for
+client setup and how to plan, apply and verify changes.
 
 ## Explore further
 
 | Guide | What you'll find |
 | --- | --- |
 | [User guide](docs/guide.md) | All commands, clone options, supported URLs, safety rules and exit codes |
-| [Configuration](docs/configuration.md) | Multiple roots, TOML/KDL schemas, path expansion and ghq settings |
+| [Configuration](docs/configuration.md) | Multiple roots, TOML/KDL/YAML schemas, path expansion and ghq settings |
+| [Agent guide](docs/agents.md) | Noninteractive workflows, JSON reports, exit codes and automation boundaries |
 | [Development](docs/development.md) | Pinned tools, native/Dagger/Nix checks, deterministic simulations and PTY tests |
 | [Benchmarks](docs/benchmarks/README.md) | Reproducible ghq comparisons, native Git experiments and raw measurements |
 | [Design decisions](https://github.com/niklas-heer/repot/tree/main/decisions) | The reasoning behind the implementation |

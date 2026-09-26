@@ -19,7 +19,8 @@ mise run run -- --help  # run the CLI from source
 On macOS, `mise run ci` needs a Docker-compatible engine such as [Colima](https://github.com/abiosoft/colima) (`colima start`).
 
 Runtime dependencies are scoped to concrete needs: `serde`/`serde_json` for reports,
-`toml`/`toml_edit` and `kdl` for validated, comment-preserving manifests, `tempfile` for staging,
+`toml`/`toml_edit`, `kdl` and `yaml-edit` for validated, comment-preserving manifests,
+`tempfile` for staging,
 `nix` for Unix process-group cancellation, and `rustix` for atomic no-overwrite moves.
 The existing `clap` dependency handles the command interface.
 `ratatui`, `crossterm`, `nucleo-matcher` and `signal-hook` provide the embedded
@@ -28,6 +29,15 @@ remains authoritative for status and mutations. `portable-pty` is a test-only
 dependency for actual terminal and shell workflows.
 `ureq` with Rustls and `html5gum` implement bounded Go vanity metadata resolution;
 `clap_complete` and `clap_complete_nushell` generate shell completions.
+`rmcp` supplies the typed stdio MCP protocol and `tokio` its local asynchronous
+runtime. MCP operations use the same CLI implementation and safety checks.
+
+`yaml-edit` currently comes from a small vendored runtime copy with a
+[checked-negation correction](../vendor/yaml-edit/REPOT_PATCH.md) for a valid
+string that made the upstream parser panic. Its license and patch notice ship
+with the binary. Repot is distributed through GitHub archives and Git source,
+Homebrew and Nix; crates.io publication is disabled while this local dependency
+is needed.
 
 Tests invoke the real binary with temporary homes, checkouts and local bare remotes.
 Forge responses and failures are controlled by local shims; no test publishes to a
@@ -37,7 +47,7 @@ preservation and failure recovery. Failures include the seed and action trace.
 Shell tests exercise supported installed shells; Nix checks supply all four.
 The picker also has deterministic input-state simulations and PTY tests for
 selection, cancellation, resizing, terminal restoration and shell handoffs.
-Manifest editing runs seeded sequences against both TOML and KDL, including
+Manifest editing runs seeded sequences against TOML, KDL and YAML, including
 concurrent registration, external edits, malformed input and recovery.
 
 ## Preparing a release
@@ -45,7 +55,7 @@ concurrent registration, external edits, malformed input and recovery.
 Keep the Cargo package version and lockfile aligned, write
 `docs/releases/vX.Y.Z.md`, and commit the checked changes. Run the **Release**
 workflow manually on that commit before creating a tag. Manual runs build and
-test all four native targets, verify extracted archives with both manifest
+test all four native targets, verify extracted archives with all three manifest
 formats, run the Nix source checks, and install/test the generated Homebrew
 formula on a disposable runner. They upload artifacts without publishing.
 
@@ -54,6 +64,13 @@ tag workflow repeats the gates and publishes the archives, `SHA256SUMS` and
 generated `repot.rb` with the checked-in release notes. Copy that generated
 formula into `Formula/repot.rb` after publication and commit it so the tap
 installs the released version; the formula also retains `--HEAD` source builds.
+
+## Working with agents
+
+The [agent guide](agents.md), also available through `repot agent-guide`, explains
+how an agent can operate the installed CLI: command selection, JSON output, exit
+codes and safe automation. It is distinct from this repository’s `AGENTS.md`,
+which governs agents contributing to repot’s source.
 
 ## Project rules
 

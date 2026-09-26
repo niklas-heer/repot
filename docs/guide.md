@@ -18,6 +18,8 @@
 | `repot migrate` | Move and register an existing checkout |
 | `repot rm` / `repot trash` | Archive a checkout without losing work; list or restore archives |
 | `repot shell-init <shell>` | Print shell integration |
+| `repot mcp` | Run the local stdio MCP server for agent clients |
+| `repot agent-guide` | Print the agent integration guide without reading repository configuration |
 | `repot completions <shell>` | Generate bash, zsh, fish or Nushell completions |
 
 repot never commits, stashes, resets or force-pushes, and only updates a repository by fast-forward.
@@ -189,7 +191,7 @@ repot restore --timeout 120 --json
 `--register` leaves it in place. Dirty files are preserved when moving. A checkout
 without a remote can be registered in place with restoration disabled.
 
-See [Configuration](configuration.md) for TOML and KDL manifests, path expansion,
+See [Configuration](configuration.md) for TOML, KDL and YAML manifests, path expansion,
 comment-preserving registration and dotfiles symlinks.
 
 Restore skips `restore = false` entries and **every** existing destination, including

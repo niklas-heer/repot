@@ -1,6 +1,6 @@
 # repot build brief
 
-Created 2026-09-26. This document records what repot should become, the rules it must keep, and the order of work. Status: all six original implementation milestones are complete. The first release is being prepared with the user-requested KDL manifest support and a developer-focused documentation pass. Publication is authorized after the full release rehearsal and artifact checks pass.
+Created 2026-09-26. This document records what repot should become, the rules it must keep, and the order of work. Status: all six original implementation milestones are complete. The first release is being prepared with the user-requested KDL and YAML manifest support, agent guidance and a developer-focused documentation pass. Publication is authorized after the full release rehearsal and artifact checks pass.
 
 ## Intent
 
@@ -40,6 +40,8 @@ The implemented command reference and options are in [README.md](README.md) and 
 
 | Command | Purpose |
 | --- | --- |
+| `repot agent-guide` | Print bundled automation guidance, examples and safety rules |
+| `repot mcp` | Serve typed repository tools to agents over standard input/output |
 | `repot get` / `repot clone` | Clone/import repositories; update existing checkouts safely |
 | `repot root [--all]` | Show primary or all repository roots |
 | `repot list [--json]` | Every known repository: tree, registered extras, scratch projects |
@@ -77,9 +79,10 @@ A child process cannot change its parent shell's directory. `repot shell-init` p
 
 ### Manifest
 
-A TOML or KDL v2 file kept in dotfiles, for example
-`~/.config/repot/repos.toml` or `~/.config/repot/repos.kdl`. Both formats describe
-the same settings and repositories. If both default files exist, `--manifest`
+A TOML, KDL v2 or YAML file kept in dotfiles, for example
+`~/.config/repot/repos.toml`, `~/.config/repot/repos.kdl`, or
+`~/.config/repot/repos.yaml` (`.yml` also works). All formats describe
+the same settings and repositories. If multiple default files exist, `--manifest`
 must select one explicitly. New manifests default to TOML. For example:
 
 ```toml
@@ -105,6 +108,18 @@ settings {
 }
 repo "https://github.com/niklas-heer/repot"
 repo "https://github.com/niklas-heer/dotfiles" path="~/.local/share/chezmoi" restore=#false
+```
+
+The equivalent YAML manifest is:
+
+```yaml
+settings:
+  owners: [niklas-heer]
+repo:
+  - url: https://github.com/niklas-heer/repot
+  - url: https://github.com/niklas-heer/dotfiles
+    path: ~/.local/share/chezmoi
+    restore: false
 ```
 
 ### Profiles
