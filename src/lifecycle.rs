@@ -77,6 +77,10 @@ pub fn preflight_move(source: &Path, destination: &Path) -> Result<()> {
             "checkout borrows an external object database; register it in place instead".into(),
         );
     }
+    if source.join(".git/commondir").exists() {
+        return Err("checkout has a shared Git directory; register it in place instead".into());
+    }
+    check_metadata_links(&source.join(".git"))?;
     let worktrees = process::git(&source, &["worktree", "list", "--porcelain", "-z"])?;
     if worktrees
         .split('\0')
@@ -107,7 +111,7 @@ pub fn preflight_move(source: &Path, destination: &Path) -> Result<()> {
             return Err("finish the current Git operation before moving the checkout".into());
         }
     }
-    if process::git(&source, &["config", "--local", "--get", "core.worktree"]).is_ok() {
+    if process::git_optional(&source, &["config", "--local", "--get", "core.worktree"])?.is_some() {
         return Err("checkout uses a separate worktree path; register it in place instead".into());
     }
     let parent = existing_parent(destination)?;
@@ -129,17 +133,41 @@ pub fn preflight_move(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn existing_parent(path: &Path) -> Result<&Path> {
+fn check_metadata_links(git_dir: &Path) -> Result<()> {
+    let mut pending = vec![git_dir.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in
+            fs::read_dir(directory).map_err(|error| format!("inspect Git metadata: {error}"))?
+        {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let kind = entry.file_type().map_err(|error| error.to_string())?;
+            if kind.is_symlink() {
+                return Err(
+                    "checkout has symlinked Git metadata; register it in place instead".into(),
+                );
+            }
+            if kind.is_dir() {
+                pending.push(entry.path());
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn existing_parent(path: &Path) -> Result<&Path> {
     let mut parent = path.parent().ok_or("destination has no parent")?;
-    while !parent.exists() {
-        parent = parent
-            .parent()
-            .ok_or("destination has no existing parent")?;
+    loop {
+        match fs::symlink_metadata(parent) {
+            Ok(_) if parent.is_dir() => return Ok(parent),
+            Ok(_) => return Err("destination parent is not a directory".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                parent = parent
+                    .parent()
+                    .ok_or("destination has no existing parent")?;
+            }
+            Err(error) => return Err(format!("inspect destination parent: {error}")),
+        }
     }
-    if !parent.is_dir() {
-        return Err("destination parent is not a directory".into());
-    }
-    Ok(parent)
 }
 
 pub fn move_checkout(source: &Path, destination: &Path) -> Result<()> {

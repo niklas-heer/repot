@@ -281,6 +281,9 @@ fn check_origin(path: &Path, target: &Target, options: &Options, resume: bool) -
         options,
         &["config", "--get-all", "remote.origin.pushurl"],
     )?;
+    if !push_urls.success && push_urls.code != Some(1) {
+        return Err("could not verify origin push URL; publication refused".into());
+    }
     if push_urls.success
         && (push_urls.stdout.lines().count() != 1
             || !matches_target(push_urls.stdout.trim_end_matches('\n'), target, options))

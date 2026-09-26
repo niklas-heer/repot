@@ -3,6 +3,7 @@
 mod config;
 mod discovery;
 mod lifecycle;
+mod manifest;
 mod navigation;
 mod process;
 mod publish;
@@ -47,8 +48,40 @@ enum Commands {
     },
     /// Create a forge repository, push the current branch, and move the checkout.
     Publish(publish::Options),
+    /// Search for unregistered checkouts outside ghq roots.
+    Find {
+        /// Search directory (defaults to HOME).
+        path: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Move a stray checkout into the tree, or register it in place.
+    Adopt {
+        path: PathBuf,
+        #[arg(long)]
+        register: bool,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Clone missing manifest entries, leaving every existing path untouched.
+    Restore {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value_t = 120, value_parser = clap::value_parser!(u64).range(1..=3600))]
+        timeout: u64,
+    },
     /// Fetch and report repository states and recommended actions.
-    Status(Inspection),
+    Status {
+        #[command(flatten)]
+        inspection: Inspection,
+        /// Inspect cached refs without fetching or changing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Fast-forward safe checkouts and return proven merged branches.
     Sync {
         #[command(flatten)]
@@ -90,7 +123,11 @@ fn run(cli: Cli) -> Result<u8> {
         navigation::shell_init(shell)?;
         return Ok(0);
     }
-    let config = config::Config::load(cli.manifest.as_deref())?;
+    let config = if matches!(cli.command, Commands::Adopt { .. }) {
+        config::Config::load_for_write(cli.manifest.as_deref())?
+    } else {
+        config::Config::load(cli.manifest.as_deref())?
+    };
     match cli.command {
         Commands::List { json } => {
             let repositories = discovery::discover(&config)?;
@@ -118,7 +155,43 @@ fn run(cli: Cli) -> Result<u8> {
             lifecycle::new_project(&config, &name, &namespace, dry_run)?;
         }
         Commands::Publish(options) => return publish::run(&config, &options),
-        Commands::Status(inspection) => return status::run(&config, &inspection.options()),
+        Commands::Find { path, json } => {
+            let path = path
+                .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+                .ok_or("HOME must be set or supply a search path")?;
+            return manifest::find(&config, &path, json);
+        }
+        Commands::Adopt {
+            path,
+            register,
+            dry_run,
+            json,
+        } => {
+            return manifest::adopt(&config, &path, register, dry_run, json);
+        }
+        Commands::Restore {
+            dry_run,
+            json,
+            timeout,
+        } => {
+            return manifest::restore(
+                &config,
+                dry_run,
+                json,
+                std::time::Duration::from_secs(timeout),
+            );
+        }
+        Commands::Status {
+            inspection,
+            dry_run,
+        } => {
+            let mut options = inspection.options();
+            options.no_fetch |= dry_run;
+            if dry_run {
+                eprintln!("repot: dry-run uses cached remote refs; no fetch or checkout changes");
+            }
+            return status::run(&config, &options);
+        }
         Commands::Sync {
             inspection,
             dry_run,

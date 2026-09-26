@@ -168,6 +168,9 @@ pub fn render(reports: &[Report], json: bool) -> Result<u8> {
 pub fn probe(path: &Path, args: &[&str], timeout: Duration) -> Result<Option<String>> {
     let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
     let output = process::run("git", &args, path, timeout)?;
+    if !output.success && output.code != Some(1) {
+        return Err("Git inspection failed".into());
+    }
     Ok(output.success.then(|| {
         output
             .stdout
@@ -243,7 +246,7 @@ pub fn inspect(path: &Path, config: &Config, options: &Options, fetch: bool) -> 
         report.reason = "detached HEAD; choose a branch manually".into();
         return Ok(report);
     };
-    let Some(head) = probe(path, &["rev-parse", "--verify", "HEAD"], timeout)? else {
+    let Some(head) = probe(path, &["rev-parse", "--verify", "--quiet", "HEAD"], timeout)? else {
         report.state = "no-upstream".into();
         report.reason = "branch has no commits".into();
         return Ok(report);
@@ -265,7 +268,11 @@ pub fn inspect(path: &Path, config: &Config, options: &Options, fetch: bool) -> 
     let upstream_oid = if upstream.is_empty() {
         None
     } else {
-        probe(path, &["rev-parse", "--verify", &upstream], timeout)?
+        probe(
+            path,
+            &["rev-parse", "--verify", "--quiet", &upstream],
+            timeout,
+        )?
     };
     report.state = "no-upstream".into();
     if let Some(oid) = &upstream_oid {
@@ -571,6 +578,7 @@ fn return_plan(
         &[
             "rev-parse",
             "--verify",
+            "--quiet",
             &format!("refs/remotes/{remote}/{default}"),
         ],
         timeout,
@@ -598,7 +606,11 @@ fn return_plan(
         return Ok(Return::None);
     }
     let reference = format!("refs/heads/{default}");
-    let previous_default = probe(path, &["rev-parse", "--verify", &reference], timeout)?;
+    let previous_default = probe(
+        path,
+        &["rev-parse", "--verify", "--quiet", &reference],
+        timeout,
+    )?;
     if let Some(oid) = &previous_default
         && probe(
             path,
@@ -676,9 +688,15 @@ pub fn validate_plan(report: &Report, options: &Options) -> Result<()> {
     let path = &report.path;
     let timeout = options.timeout;
     let plan = report.plan.as_ref().ok_or("missing plan")?;
-    if probe(path, &["rev-parse", "--verify", &plan.reference], timeout)?.as_deref()
+    if probe(
+        path,
+        &["rev-parse", "--verify", "--quiet", &plan.reference],
+        timeout,
+    )?
+    .as_deref()
         != Some(&plan.target)
-        || probe(path, &["rev-parse", "--verify", "HEAD"], timeout)?.as_deref() != Some(&plan.head)
+        || probe(path, &["rev-parse", "--verify", "--quiet", "HEAD"], timeout)?.as_deref()
+            != Some(&plan.head)
         || probe(
             path,
             &["symbolic-ref", "--quiet", "--short", "HEAD"],
@@ -703,7 +721,11 @@ pub fn validate_plan(report: &Report, options: &Options) -> Result<()> {
     }
     if let Some(branch) = &plan.branch {
         let reference = format!("refs/heads/{branch}");
-        if probe(path, &["rev-parse", "--verify", &reference], timeout)? != plan.previous_default
+        if probe(
+            path,
+            &["rev-parse", "--verify", "--quiet", &reference],
+            timeout,
+        )? != plan.previous_default
             || required(path, &["worktree", "list", "--porcelain", "-z"], timeout)?
                 .split('\0')
                 .any(|line| line == format!("branch {reference}"))

@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 pub struct Output {
     pub success: bool,
+    pub code: Option<i32>,
     pub stdout: String,
 }
 
@@ -63,7 +64,8 @@ fn command(program: &str, args: &[&OsStr], path: &Path) -> Command {
         .env("GCM_INTERACTIVE", "never")
         .env("LC_ALL", "C")
         .env("GIT_OPTIONAL_LOCKS", "0")
-        .env("GIT_NO_REPLACE_OBJECTS", "1");
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .env("GIT_ALLOW_PROTOCOL", "file:https:http:ssh:git");
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -124,6 +126,7 @@ pub fn run(program: &str, args: &[&OsStr], path: &Path, timeout: Duration) -> Re
                 .as_ref()
                 .map(|text| Output {
                     success: status.success(),
+                    code: status.code(),
                     stdout: text.clone(),
                 })
                 .map_err(|_| format!("{program} returned unreadable output"));
@@ -137,14 +140,23 @@ pub fn run(program: &str, args: &[&OsStr], path: &Path, timeout: Duration) -> Re
 }
 
 pub fn git(path: &Path, args: &[&str]) -> Result<String> {
+    git_optional(path, args)?
+        .ok_or_else(|| "Git operation failed; inspect the repository with git".to_owned())
+}
+
+pub fn git_optional(path: &Path, args: &[&str]) -> Result<Option<String>> {
     let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
     let result = run("git", &args, path, Duration::from_secs(30))?;
     if result.success {
-        Ok(result
-            .stdout
-            .strip_suffix('\n')
-            .unwrap_or(&result.stdout)
-            .to_owned())
+        Ok(Some(
+            result
+                .stdout
+                .strip_suffix('\n')
+                .unwrap_or(&result.stdout)
+                .to_owned(),
+        ))
+    } else if result.code == Some(1) {
+        Ok(None)
     } else {
         Err("Git operation failed; inspect the repository with git".to_owned())
     }

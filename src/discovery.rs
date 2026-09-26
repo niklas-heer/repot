@@ -31,6 +31,18 @@ pub fn discover(config: &Config) -> Result<Vec<Repository>> {
     Ok(repositories(paths))
 }
 
+pub fn find(path: &Path) -> Result<Vec<Repository>> {
+    if !path.is_dir() {
+        return Err(format!(
+            "search path is not a directory: {}",
+            path.display()
+        ));
+    }
+    let mut paths = BTreeSet::new();
+    walk(path, true, &mut paths)?;
+    Ok(repositories(paths))
+}
+
 fn repositories(paths: BTreeSet<PathBuf>) -> Vec<Repository> {
     paths.into_iter().map(|path| Repository { path }).collect()
 }

@@ -48,6 +48,14 @@ pub struct Config {
 
 impl Config {
     pub fn load(manifest: Option<&Path>) -> Result<Self> {
+        Self::load_inner(manifest, false)
+    }
+
+    pub fn load_for_write(manifest: Option<&Path>) -> Result<Self> {
+        Self::load_inner(manifest, true)
+    }
+
+    fn load_inner(manifest: Option<&Path>, allow_missing: bool) -> Result<Self> {
         let cwd = env::current_dir().map_err(|error| format!("read current directory: {error}"))?;
         let home = home()?;
         let manifest_path = manifest.map_or_else(
@@ -66,7 +74,10 @@ impl Config {
         let manifest = match fs::read_to_string(&manifest_path) {
             Ok(text) => toml::from_str(&text)
                 .map_err(|_| format!("invalid manifest at {}", manifest_path.display()))?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound && manifest.is_none() => {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && (manifest.is_none() || allow_missing) =>
+            {
                 Manifest::default()
             }
             Err(error) => {
@@ -154,6 +165,10 @@ fn expand_path(value: &str, base: &Path, home: &Path) -> Result<PathBuf> {
     while let Some(character) = chars.next() {
         if character != '$' {
             expanded.push(character);
+            continue;
+        }
+        if chars.next_if_eq(&'$').is_some() {
+            expanded.push('$');
             continue;
         }
         let name = if chars.next_if_eq(&'{').is_some() {

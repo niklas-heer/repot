@@ -4,9 +4,9 @@ Keep every Git repository on a machine organised, current and portable.
 
 repot builds on the [ghq](https://github.com/x-motemen/ghq) directory tree (`<root>/<host>/<owner>/<repo>`). It adds what ghq leaves out: jumping to any repository with a fuzzy picker, safely updating everything at once (including returning to `main` after a branch was merged on GitHub), scratch projects that can be published into the tree later, finding stray repositories, and restoring a machine from a manifest kept in your dotfiles.
 
-> **Status:** milestones 1–3 are implemented: discovery, navigation, status, safe sync, scratch creation and GitHub/GitLab publishing. Adoption/restore and release packaging remain planned. See [BUILD_BRIEF.md](BUILD_BRIEF.md) for safety rules and milestones.
+> **Status:** milestones 1–4 are implemented. All core commands are available; release packaging remains planned. See [BUILD_BRIEF.md](BUILD_BRIEF.md) for safety rules and milestones.
 
-## Commands (remaining milestones planned)
+## Commands
 
 | Command | Purpose |
 | --- | --- |
@@ -49,7 +49,7 @@ repot sync --jobs 4 --timeout 30
 ```
 
 Status fetches the relevant remote for each checkout with bounded parallelism.
-`--no-fetch` uses cached tracking refs. `sync --dry-run` also uses cached refs and
+`--no-fetch` or `status --dry-run` uses cached tracking refs. `sync --dry-run` also uses cached refs and
 prints that limitation; it does not fetch, write refs, or change the working tree.
 JSON is a sorted array with `path`, `state`, `action`, `branch`, dirty counts,
 stash count, ahead/behind counts, reason, and whether an action was applied.
@@ -92,8 +92,53 @@ back a partial publication.
 
 Scratch creation and relocation refuse all existing destination paths, including
 symlinks and concurrent collisions. Moves are atomic within one filesystem;
-checkouts with linked worktrees, submodules, borrowed object databases or separate
+checkouts with linked worktrees, submodules, borrowed object databases, symlinked Git metadata or separate
 worktree configuration require manual handling or registration in place.
+
+## Find, adopt and restore
+
+```sh
+repot find ~/Projects --json
+repot adopt ~/Downloads/project --dry-run
+repot adopt ~/Downloads/project
+repot adopt ~/.local/share/chezmoi --register
+repot restore --dry-run
+repot restore --timeout 120 --json
+```
+
+`find` skips known checkouts, symlinks, generated directories and common caches.
+`adopt` moves a standalone checkout to its remote's tree location and registers it;
+`--register` leaves it in place. Dirty files are preserved when moving. A checkout
+without a remote can be registered in place with restoration disabled.
+
+The TOML manifest is portable and editable by hand:
+
+```toml
+[settings]
+owners = ["your-name"]
+
+[[repo]]
+url = "https://github.com/your-name/project"
+
+[[repo]]
+url = "https://github.com/your-name/dotfiles"
+path = "~/.local/share/chezmoi"
+restore = false
+```
+
+Paths expand `~` and environment variables; `$$` represents a literal dollar.
+Relative paths resolve against the manifest's directory. Registration uses home-relative
+paths where possible. Comment-preserving updates follow a symlinked manifest to its
+dotfiles source, use a persistent companion `.lock` file, and serialize concurrent
+registrations. `adopt --manifest PATH` can create a new manifest.
+
+Restore skips `restore = false` entries and **every** existing destination, including
+files and dangling symlinks. Missing checkouts are cloned into private staging
+folders and installed with an atomic no-overwrite rename. One clone failure does
+not prevent independent entries from restoring. Submodules are not cloned
+recursively. Local absolute/file remotes are supported only for entries with an
+explicit destination path; credential-bearing URLs and shell helper protocols are
+rejected.
 
 ## Development
 
