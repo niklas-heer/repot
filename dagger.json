@@ -1,0 +1,6 @@
+{
+  "name": "repot-ci",
+  "engineVersion": "v0.21.9",
+  "sdk": { "source": "dang" },
+  "source": ".dagger"
+}

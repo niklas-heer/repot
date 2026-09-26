@@ -1,0 +1,61 @@
+min_version = "2026.7.7"
+
+[tools]
+# Keep this version aligned with rust-toolchain.toml and Cargo.toml.
+rust = { version = "1.97.1", profile = "minimal", components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"] }
+dagger = "0.21.9"
+"github:cargo-bins/cargo-binstall" = "1.23.0"
+"github:nextest-rs/nextest" = { version = "0.9.144", version_prefix = "cargo-nextest-" }
+"cargo:bacon" = "3.25.0"
+"github:watchexec/watchexec" = "2.7.2"
+
+[tasks.fmt]
+description = "Check Rust formatting"
+run = "cargo fmt --all --check"
+
+[tasks."fmt-fix"]
+description = "Apply Rust formatting"
+run = "cargo fmt --all"
+
+[tasks.check]
+description = "Type-check every target and feature"
+run = "cargo check --locked --all-targets --all-features"
+
+[tasks.clippy]
+description = "Enforce strict Clippy rules with no warnings"
+run = "cargo clippy --locked --all-targets --all-features -- -D warnings"
+
+[tasks.test]
+description = "Run unit and CLI tests with nextest"
+run = "cargo nextest run --locked --all-features"
+
+[tasks.dev]
+description = "Watch Clippy diagnostics with bacon"
+run = "bacon clippy"
+raw = true
+
+[tasks.run]
+description = "Run the CLI; pass a command after --"
+run = "cargo run --locked --"
+raw = true
+
+[tasks.watch]
+description = "Rerun checks and tests on changes"
+run = "watchexec --restart --exts rs,toml --ignore target -- mise run check ::: test"
+
+[tasks.ci]
+description = "Run reproducible Linux CI through Dagger and Dang (requires a container engine)"
+run = "dagger call ci"
+
+[tasks."ci-native"]
+description = "Run all quality gates on the host; also used inside Dagger"
+run = [
+  "mise run fmt",
+  "mise run check",
+  "mise run clippy",
+  "cargo nextest run --locked --all-features --profile ci",
+]
+
+[tasks.build]
+description = "Build the optimized CLI with overflow checks"
+run = "cargo build --locked --release"

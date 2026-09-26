@@ -1,0 +1,36 @@
+[package]
+name = "repot"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+description = "Keep every Git repository on a machine organised, current and portable"
+license = "MIT"
+repository = "https://github.com/niklas-heer/repot"
+include = ["/src/**/*.rs", "/tests/*.rs", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE", "/rust-toolchain.toml", "/mise.toml", "/clippy.toml"]
+
+[dependencies]
+clap = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+
+[profile.release]
+overflow-checks = true
+
+[lints.rust]
+unsafe_code = "forbid"
+unknown_lints = "forbid"
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+unreachable = "deny"
+unimplemented = "deny"
+unchecked_time_subtraction = "deny"
+todo = "deny"
+string_slice = "deny"
+panic_in_result_fn = "deny"
+panic = "deny"
+exit = "deny"
+as_conversions = "deny"

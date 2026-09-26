@@ -1,0 +1,13 @@
+/target/
+/dist/
+.mise.local.toml
+.env
+.env.*
+!.env.example
+.DS_Store
+*.swp
+*.swo
+*.log
+.idea/
+.vscode/*
+!.vscode/settings.json

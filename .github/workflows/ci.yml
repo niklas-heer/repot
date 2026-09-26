@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux (Dagger + Dang)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77
+        with:
+          version: "0.21.9"
+          verb: call
+          args: ci
+
+  macos:
+    name: Native macOS
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+      MISE_AUTO_INSTALL: "false"
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: jdx/mise-action@v4.3.0
+        with:
+          version: "2026.9.5"
+          install_args: "rust github:nextest-rs/nextest"
+          cache: true
+      - run: mise run ci-native
