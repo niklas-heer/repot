@@ -13,6 +13,10 @@ type RepotCi {
     "!.config",
     "!src",
     "!tests",
+    "!scripts",
+    "!Formula",
+    "!README.md",
+    "!LICENSE",
   ])
 
   """

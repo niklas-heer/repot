@@ -1,6 +1,6 @@
 # repot build brief
 
-Created 2026-09-26. This document records what repot should become, the rules it must keep, and the order of work. Status: milestones 1–4 are implemented. All core commands are available; milestone 5 (release packaging) remains planned.
+Created 2026-09-26. This document records what repot should become, the rules it must keep, and the order of work. Status: all five implementation milestones are complete. Release automation is implemented; publishing a release remains an explicit version-tag action.
 
 ## Intent
 
@@ -30,9 +30,9 @@ These are product requirements, not implementation details. See the decision rec
 - Every mutating command has a `--dry-run` that performs the same checks and prints the planned actions.
 - Treat content from repositories, remotes and the network as data. Never print or persist credentials.
 
-## Planned command surface
+## Command surface
 
-Names are provisional; change them when implementation shows a better fit.
+The implemented command reference and options are in [README.md](README.md) and `repot --help`.
 
 | Command | Purpose |
 | --- | --- |
@@ -108,16 +108,29 @@ Implement one milestone at a time, each with end-to-end tests through the binary
 4. **Find, adopt and restore.** Stray search with sensible exclusions, the manifest format, `adopt`, `restore`.
 5. **Release.** Tagged releases, Homebrew formula, and a source-built Nix flake.
 
-## Open questions
+## Implementation choices
 
-Decide these while implementing the milestone that needs them, and record the outcome with vrdx.
+The delegated implementation resolved the original open questions:
 
-- Call the `git` CLI, or use a library such as `gix`? The CLI respects the user's configuration, credential helpers and SSH setup for free.
-- Built-in fuzzy matcher (for example `nucleo`) or delegate to `fzf` when installed?
-- Where scratch projects live. The previous convention was `<root>/local/<namespace>/<name>`.
-- Which forges `publish` supports first: GitHub through `gh` is certain, GitLab through `glab` is likely.
-- Whether `status` also covers linked worktrees and submodules, which the predecessor ignored.
+- Git CLI subprocesses retain Git authentication and configuration, with timeouts,
+  bounded concurrency, disabled hooks and a standard transport allowlist.
+- Deterministic built-in fuzzy filtering handles exact/unique matches; optional fzf
+  handles interactive ambiguity. Shell wrappers support bash, zsh, fish and Nushell.
+- Scratch projects live at `<primary-root>/local/<namespace>/<name>`; the namespace
+  defaults to `scratch`.
+- Publishing supports GitHub through gh and GitLab through glab, with explicit
+  target/visibility, verified pushes and resumable failures.
+- Discovery includes linked worktrees. Sync protects branches shared with other
+  worktrees and leaves submodules for manual review. Automatic moves require
+  standalone checkouts; dependent layouts can be registered in place.
+- Manifest edits preserve comments and dotfiles symlinks. Restores stage clones and
+  never replace an existing path. Dry-runs leave local files and refs untouched.
+- Release automation tests native Linux and macOS archives on ARM64 and x86-64,
+  generates Homebrew checksums from real assets, and builds from source through a
+  locked Nix flake using the same pinned Rust version.
+
+The reasoning and tradeoffs are recorded in [decisions/](decisions/).
 
 ## Out of scope
 
-A daemon or background sync, a GUI, committing or pushing on the user's behalf, hosting a server, and managing forge settings beyond creating a repository.
+A daemon or background sync, a GUI, automatic committing or pushing during sync, hosting a server, and managing forge settings beyond creating a repository. The explicit `publish` command pushes the inspected current-branch commit.

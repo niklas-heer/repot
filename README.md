@@ -4,17 +4,51 @@ Keep every Git repository on a machine organised, current and portable.
 
 repot builds on the [ghq](https://github.com/x-motemen/ghq) directory tree (`<root>/<host>/<owner>/<repo>`). It adds what ghq leaves out: jumping to any repository with a fuzzy picker, safely updating everything at once (including returning to `main` after a branch was merged on GitHub), scratch projects that can be published into the tree later, finding stray repositories, and restoring a machine from a manifest kept in your dotfiles.
 
-> **Status:** milestones 1–4 are implemented. All core commands are available; release packaging remains planned. See [BUILD_BRIEF.md](BUILD_BRIEF.md) for safety rules and milestones.
+> **Status:** all five implementation milestones are complete, including release automation. See [BUILD_BRIEF.md](BUILD_BRIEF.md) for safety rules and scope. A release is published only when a matching version tag is pushed.
+
+## Install
+
+repot supports Linux and macOS on Intel/AMD and ARM64. Git must be available;
+install `fzf` for interactive ambiguous selections and `gh` or `glab` for publishing.
+
+From a checkout with the pinned Rust toolchain:
+
+```sh
+mise exec -- cargo install --locked --path .
+```
+
+With Nix, the locked flake builds from source and supplies Git at runtime:
+
+```sh
+nix build .
+nix run . -- --help
+```
+
+The release workflow produces a tarball for each supported platform, `SHA256SUMS`,
+and a Homebrew formula with hashes of the actual archives. Verify the checksums
+before extracting a downloaded archive and placing `repot` on your `PATH`.
+`Formula/repot.rb` is a source-build HEAD formula for a Homebrew tap; a stable tap
+can use the generated `repot.rb` release asset. No tap or release is published by
+a local build.
+
+To install the current source through Homebrew, use this repository as a tap:
+
+```sh
+brew tap niklas-heer/repot https://github.com/niklas-heer/repot
+brew install --HEAD niklas-heer/repot/repot
+```
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
+| `repot list [--json]` | List discovered and registered repositories |
 | `repot jump` | Fuzzy-pick a repository and `cd` into it |
 | `repot status` / `repot sync` | See every repository's state; fast-forward what is safe |
 | `repot new` / `repot publish` | Start a local scratch project; later create its remote and move it into the tree |
 | `repot find` / `repot adopt` | Discover repositories outside the tree and bring them in |
-| `repot restore` | Clone everything from your manifest on a new machine |
+| `repot restore` | Clone missing entries from your manifest on a new machine |
+| `repot shell-init <shell>` | Print shell integration |
 
 repot never commits, stashes, resets or force-pushes, and only updates a repository by fast-forward.
 
@@ -149,12 +183,33 @@ mise install            # pinned Rust toolchain, nextest, bacon, watchexec, dagg
 mise run ci-native      # formatting, type check, strict Clippy and tests on the host
 mise run ci             # the same checks in Linux through Dagger (needs a container engine)
 mise run build          # optimized binary in target/release/repot
+mise run package        # native tarball and checksum in dist/
+mise run nix-check      # isolated source build and tests with locked Nix inputs
 mise run run -- --help  # run the CLI from source
 ```
 
 `mise run dev` keeps Clippy feedback open with bacon, and `mise run watch` reruns checks and tests on every change. `mise tasks` lists everything.
 
 On macOS, `mise run ci` needs a Docker-compatible engine such as [Colima](https://github.com/abiosoft/colima) (`colima start`).
+
+Runtime dependencies are scoped to concrete needs: `serde`/`serde_json` for reports,
+`toml`/`toml_edit` for validated, comment-preserving manifests, `tempfile` for staging,
+`nix` for Unix process-group cancellation, and `rustix` for atomic no-overwrite moves.
+The existing `clap` dependency handles the command interface.
+
+Tests invoke the real binary with temporary homes, checkouts and local bare remotes.
+Forge responses and failures are controlled by local shims; no test publishes to a
+real forge. Four deterministic seeds (`7`, `42`, `2026`, `65537`) run 64 persistent
+Git transitions, checking dry-run immutability, commit ancestry, local-file/index
+preservation and failure recovery. Failures include the seed and action trace.
+Shell tests exercise supported installed shells; Nix checks supply all four.
+
+For a release, update the Cargo package version and lockfile, commit it, then push
+the matching `vX.Y.Z` tag. The workflow first runs Linux Dagger, native macOS and
+Nix checks, tests and packages four native targets, and publishes only after all
+jobs pass. Its manual dispatch runs verification and uploads workflow artifacts
+without publishing a release. Archive tests extract and execute the real binary,
+verify documentation and checksums, and check formula architecture mappings.
 
 Lasting technical choices are recorded in [decisions/](decisions/) with [vrdx](https://github.com/niklas-heer/vrdx).
 

@@ -59,3 +59,12 @@ run = [
 [tasks.build]
 description = "Build the optimized CLI with overflow checks"
 run = "cargo build --locked --release"
+
+[tasks.package]
+description = "Build and archive the native executable in dist/"
+depends = ["build"]
+run = "sh scripts/package.sh"
+
+[tasks."nix-check"]
+description = "Build and test the source package with locked Nix inputs"
+run = "nix flake check --print-build-logs"
