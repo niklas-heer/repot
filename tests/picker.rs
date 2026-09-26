@@ -187,22 +187,76 @@ mod tests {
     }
 
     fn terminal_settings(path: &Path) -> Vec<String> {
-        fs::read_to_string(path)
+        let fields = fs::read_to_string(path)
             .expect("terminal settings")
             .trim()
             .split(':')
-            .map(|field| {
-                // Darwin sets PENDIN after signal delivery: it tracks unread input,
-                // not a user-selected terminal mode. Every other bit must match.
-                #[cfg(target_os = "macos")]
-                if let Some(value) = field.strip_prefix("lflag=") {
-                    let flags = u64::from_str_radix(value, 16).expect("terminal lflags");
-                    let pending = nix::libc::PENDIN;
-                    return format!("lflag={:x}", flags & !pending);
-                }
-                field.to_owned()
-            })
-            .collect()
+            .map(str::to_owned)
+            .collect();
+        #[cfg(target_os = "macos")]
+        let fields = darwin_terminal_settings(fields);
+        fields
+    }
+
+    #[cfg(target_os = "macos")]
+    fn darwin_terminal_settings(mut fields: Vec<String>) -> Vec<String> {
+        // XNU termios.h defines PENDIN (0x20000000) as state; tty.c sets it
+        // when restoring ICANON and clears it while processing pending input.
+        // GNU stty's display_recoverable prints iflag:oflag:cflag:lflag:cc...;
+        // BSD stty uses gfmt1 with labelled fields. Preserve every other bit.
+        let (index, prefix) = if fields.first().is_some_and(|field| field == "gfmt1") {
+            (
+                fields
+                    .iter()
+                    .position(|field| field.starts_with("lflag="))
+                    .expect("BSD stty local flags"),
+                "lflag=",
+            )
+        } else {
+            assert_eq!(
+                fields.len(),
+                nix::libc::NCCS.saturating_add(4),
+                "GNU stty field count"
+            );
+            assert!(
+                fields
+                    .iter()
+                    .all(|field| u64::from_str_radix(field, 16).is_ok()),
+                "GNU stty hexadecimal fields"
+            );
+            (3, "")
+        };
+        let field = fields.get_mut(index).expect("stty local flags");
+        let flags = u64::from_str_radix(field.strip_prefix(prefix).expect("local flag prefix"), 16)
+            .expect("terminal local flags");
+        *field = format!("{prefix}{:x}", flags & !nix::libc::PENDIN);
+        fields
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bsd_and_gnu_stty_comparison_ignores_only_darwin_pending_input_state() {
+        let normalize =
+            |text: &str| darwin_terminal_settings(text.split(':').map(str::to_owned).collect());
+        for plain in [
+            "gfmt1:cflag=4b00:iflag=2b02:lflag=5cb:oflag=3",
+            "2b02:3:4b00:5cb:4:ff:ff:7f:17:15:12:ff:3:1c:1a:19:11:13:16:f:1:0:14:ff",
+        ] {
+            assert_eq!(
+                normalize(plain),
+                normalize(&plain.replace("5cb", "200005cb"))
+            );
+            assert_ne!(
+                normalize(plain),
+                normalize(&plain.replace("5cb", "5c3")),
+                "echo changes must still fail"
+            );
+            assert_ne!(
+                normalize(plain),
+                normalize(&plain.replace("2b02", "20002b02")),
+                "input flags must still match exactly"
+            );
+        }
     }
 
     #[test]
