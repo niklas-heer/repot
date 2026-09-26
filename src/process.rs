@@ -65,7 +65,7 @@ fn command(program: &str, args: &[&OsStr], path: &Path) -> Command {
         .env("LC_ALL", "C")
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_NO_REPLACE_OBJECTS", "1")
-        .env("GIT_ALLOW_PROTOCOL", "file:https:http:ssh:git");
+        .env("GIT_ALLOW_PROTOCOL", "file:https:http:ssh:git:codecommit");
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

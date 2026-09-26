@@ -1,10 +1,14 @@
 # repot build brief
 
-Created 2026-09-26. This document records what repot should become, the rules it must keep, and the order of work. Status: all five implementation milestones are complete. Release automation is implemented; publishing a release remains an explicit version-tag action.
+Created 2026-09-26. This document records what repot should become, the rules it must keep, and the order of work. Status: all six implementation milestones are complete, including the expanded Git-focused ghq replacement, embedded picker, measured native Git reads and project icon. Release publication remains an explicit version-tag action.
 
 ## Intent
 
-repot keeps every Git repository on a machine organised, current and portable. It builds on the [ghq](https://github.com/x-motemen/ghq) directory tree (`<root>/<host>/<owner>/<repo>`, for example `~/Projects/github.com/niklas-heer/repot`) instead of replacing it, so ghq and repot can be used side by side.
+repot keeps every Git repository on a machine organised, current and portable.
+It replaces ghq's Git workflows while preserving the [ghq](https://github.com/x-motemen/ghq)
+directory tree (`<root>/<host>/<owner>/<repo>`) and configuration. Existing clones
+do not need to move. The user explicitly chose Git-only scope; legacy VCS backends
+are not a goal. Navigation belongs in the binary and requires no external picker.
 
 The name is a pun: "repo" plus a letter, and repotting a plant that outgrew its pot. Moving a scratch project into the tree once it gets a remote is exactly that.
 
@@ -36,16 +40,22 @@ The implemented command reference and options are in [README.md](README.md) and 
 
 | Command | Purpose |
 | --- | --- |
+| `repot get` / `repot clone` | Clone/import repositories; update existing checkouts safely |
+| `repot root [--all]` | Show primary or all repository roots |
 | `repot list [--json]` | Every known repository: tree, registered extras, scratch projects |
 | `repot jump [query]` | Fuzzy pick; used through the shell wrapper below |
 | `repot status [--json]` | One state and one recommended action per repository, after a parallel fetch |
 | `repot sync [--dry-run]` | Fast-forward what is safe and return merged branches to the default branch |
 | `repot new <name>` | Local project without a remote |
+| `repot create <repository>` | Initialize an empty Git repository at its tree location |
 | `repot publish` | Create the remote, push, and move the checkout into the tree |
 | `repot find [path]` | Search for repositories outside the tree |
 | `repot adopt <path>` | Move a stray into the tree, or register it in place |
+| `repot migrate <path>` | Migrate and register an existing checkout |
+| `repot rm` / `repot trash` | Remove from active tree into a recoverable archive; restore explicitly |
 | `repot restore [--dry-run]` | Clone everything listed in the manifest that is missing |
 | `repot shell-init <nu\|zsh\|bash\|fish>` | Print the shell integration |
+| `repot completions <nu\|zsh\|bash\|fish>` | Generate shell completions |
 
 ### Status model
 
@@ -107,15 +117,20 @@ Implement one milestone at a time, each with end-to-end tests through the binary
 3. **Scratch and publish.** `new` and `publish`, including remote creation through the forge CLI and the checkout move.
 4. **Find, adopt and restore.** Stray search with sensible exclusions, the manifest format, `adopt`, `restore`.
 5. **Release.** Tagged releases, Homebrew formula, and a source-built Nix flake.
+6. **Replace ghq for Git.** Clone/import options, root/list compatibility, create,
+   migrate and recoverable removal, an embedded Rust picker, and measured native
+   metadata reads. Preserve original safety invariants and document deliberate
+   compatibility differences. Include a project icon.
 
 ## Implementation choices
 
 The delegated implementation resolved the original open questions:
 
 - Git CLI subprocesses retain Git authentication and configuration, with timeouts,
-  bounded concurrency, disabled hooks and a standard transport allowlist.
-- Deterministic built-in fuzzy filtering handles exact/unique matches; optional fzf
-  handles interactive ambiguity. Shell wrappers support bash, zsh, fish and Nushell.
+  bounded concurrency, disabled hooks and a transport allowlist. Verified metadata
+  reads use gix; authoritative safety checks and mutations remain on Git.
+- Nucleo matching and an embedded Ratatui/Crossterm picker handle navigation.
+  Exact/unique matches select directly. Shell wrappers support bash, zsh, fish and Nushell.
 - Scratch projects live at `<primary-root>/local/<namespace>/<name>`; the namespace
   defaults to `scratch`.
 - Publishing supports GitHub through gh and GitLab through glab, with explicit
@@ -125,6 +140,9 @@ The delegated implementation resolved the original open questions:
   standalone checkouts; dependent layouts can be registered in place.
 - Manifest edits preserve comments and dotfiles symlinks. Restores stage clones and
   never replace an existing path. Dry-runs leave local files and refs untouched.
+- `get` stages clones before publishing their paths. `rm` archives rather than
+  destroys work; `trash restore` refuses occupied destinations. This deliberately
+  strengthens ghq's destructive removal behavior.
 - Release automation tests native Linux and macOS archives on ARM64 and x86-64,
   generates Homebrew checksums from real assets, and builds from source through a
   locked Nix flake using the same pinned Rust version.

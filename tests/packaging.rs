@@ -118,7 +118,7 @@ mod tests {
             .map(str::to_owned)
             .collect();
         names.sort();
-        assert_eq!(names, ["LICENSE", "README.md", "repot"]);
+        assert_eq!(names, ["LICENSE", "README.md", "assets/repot.png", "repot"]);
         let unpacked = temp.path().join("unpacked");
         fs::create_dir(&unpacked).expect("unpack directory");
         success(&run(
@@ -126,7 +126,7 @@ mod tests {
             &["-xzf", text(&archive), "-C", text(&unpacked)],
             temp.path(),
         ));
-        for name in ["README.md", "LICENSE"] {
+        for name in ["README.md", "LICENSE", "assets/repot.png"] {
             assert_eq!(
                 fs::read(unpacked.join(name)).expect("packaged documentation"),
                 fs::read(root().join(name)).expect("source documentation")

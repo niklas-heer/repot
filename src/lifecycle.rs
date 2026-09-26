@@ -11,6 +11,7 @@ pub fn new_project(config: &Config, name: &str, namespace: &str, dry_run: bool) 
     validate_component(namespace)?;
     let root = config.roots.last().ok_or("no repository root configured")?;
     let target = root.join("local").join(namespace).join(name);
+    crate::discovery::validate_public_path(&target)?;
     vacant(&target)?;
     let parent = target.parent().ok_or("destination has no parent")?;
     existing_parent(&target)?;
@@ -133,7 +134,7 @@ pub fn preflight_move(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn check_metadata_links(git_dir: &Path) -> Result<()> {
+pub fn check_metadata_links(git_dir: &Path) -> Result<()> {
     let mut pending = vec![git_dir.to_path_buf()];
     while let Some(directory) = pending.pop() {
         for entry in

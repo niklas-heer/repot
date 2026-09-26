@@ -25,7 +25,7 @@ pub fn run(config: &Config, options: &Options, dry_run: bool) -> Result<u8> {
     status::render(&reports, options.json)
 }
 
-fn apply(options: &Options, report: &mut Report) -> Result<()> {
+pub fn apply(options: &Options, report: &mut Report) -> Result<()> {
     status::validate_plan(report, options)?;
     let plan = report.plan.as_ref().ok_or("missing update plan")?;
     if let Some(branch) = &plan.branch {

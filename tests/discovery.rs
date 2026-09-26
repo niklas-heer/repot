@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod tests {
 
+    use std::fmt::Write;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Output};
@@ -73,6 +74,58 @@ mod tests {
                 .map(|entry| PathBuf::from(entry["path"].as_str().expect("repository path")))
                 .collect()
         }
+    }
+
+    #[test]
+    fn private_staging_and_archives_never_become_active_repositories() {
+        let world = World::new();
+        let active = world.path("ghq/example.test/team/active");
+        let outside = world.path("outside/active");
+        world.init(&active);
+        world.init(&outside);
+        let mut manifest = String::new();
+        for prefix in [
+            ".repot-clone-",
+            ".repot-new-",
+            ".repot-create-",
+            ".repot-restore-",
+            ".repot-trash/",
+        ] {
+            for parent in ["ghq/example.test/team", "outside"] {
+                let relative = format!("{parent}/{prefix}private/checkout");
+                world.init(&world.path(&relative));
+                writeln!(
+                    manifest,
+                    "[[repo]]\nurl = ''\npath = '~/{relative}'\nrestore = false"
+                )
+                .expect("manifest entry");
+            }
+        }
+        fs::create_dir_all(world.path("config/repot")).expect("config");
+        fs::write(world.path("config/repot/repos.toml"), manifest).expect("manifest");
+        assert_eq!(
+            World::paths(&world.repot(&["list", "--json"])),
+            [active.canonicalize().expect("active")]
+        );
+        let status = world.repot(&["status", "--no-fetch", "--json"]);
+        let rows: serde_json::Value = serde_json::from_slice(&status.stdout).expect("status JSON");
+        assert_eq!(rows.as_array().expect("statuses").len(), 1);
+        assert_eq!(
+            rows[0]["path"].as_str(),
+            active.canonicalize().expect("active").to_str()
+        );
+        assert_eq!(
+            World::paths(&world.repot(&["find", ".", "--json"])),
+            [outside.canonicalize().expect("outside")]
+        );
+        assert!(
+            World::paths(&world.repot(&[
+                "find",
+                "outside/.repot-clone-private/checkout",
+                "--json"
+            ]))
+            .is_empty()
+        );
     }
 
     #[test]

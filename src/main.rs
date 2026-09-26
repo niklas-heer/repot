@@ -1,16 +1,23 @@
 //! Safe, portable management of Git checkouts in a ghq-compatible tree.
 
+mod completions;
 mod config;
 mod discovery;
+mod get;
+mod ghq_listing;
+mod git_read;
 mod lifecycle;
 mod manifest;
 mod navigation;
 mod process;
 mod publish;
+mod remote_extra;
+mod remote_spec;
+mod repository_ops;
 mod status;
 mod sync;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -18,8 +25,18 @@ pub(crate) type Result<T> = std::result::Result<T, String>;
 
 /// Keep every Git repository on this machine organised, current and portable.
 #[derive(Debug, Parser)]
-#[command(name = "repot", version, about, arg_required_else_help = true)]
+#[command(
+    name = "repot",
+    version,
+    about,
+    arg_required_else_help = true,
+    disable_version_flag = true,
+    propagate_version = true,
+    disable_help_subcommand = true
+)]
 struct Cli {
+    #[arg(short = 'v', long = "version", visible_short_alias = 'V', global = true, action = clap::ArgAction::Version)]
+    _version: Option<bool>,
     /// Manifest location (default: `$XDG_CONFIG_HOME/repot/repos.toml`).
     #[arg(long, global = true)]
     manifest: Option<PathBuf>,
@@ -29,10 +46,34 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Print shell completions without changing shell configuration.
+    Completions {
+        #[arg(value_enum)]
+        shell: completions::Shell,
+    },
+    /// Show help for a command or nested subcommand.
+    #[command(visible_alias = "h")]
+    Help { command: Vec<String> },
+    /// Clone repositories into the tree, or safely update existing checkouts.
+    #[command(alias = "clone")]
+    Get(get::Options),
+    /// Create an empty repository directly at its host/owner/name tree location.
+    Create(get::CreateOptions),
+    /// Remove a checkout from the active tree into a recoverable archive.
+    Rm(repository_ops::RemoveOptions),
+    /// Move an existing checkout into the tree and register it.
+    Migrate(repository_ops::MigrateOptions),
+    /// List or restore repositories removed from the active tree.
+    Trash {
+        #[command(subcommand)]
+        command: repository_ops::TrashCommand,
+    },
     /// List checkouts in ghq roots and registered locations.
-    List {
+    List(ghq_listing::ListOptions),
+    /// Show the primary repository root, or all roots in priority order.
+    Root {
         #[arg(long)]
-        json: bool,
+        all: bool,
     },
     /// Select a repository; install shell-init to change your shell directory.
     Jump { query: Option<String> },
@@ -119,34 +160,38 @@ impl Inspection {
 }
 
 fn run(cli: Cli) -> Result<u8> {
-    if let Commands::ShellInit { shell } = &cli.command {
-        navigation::shell_init(shell)?;
-        return Ok(0);
+    match &cli.command {
+        Commands::ShellInit { shell } => {
+            navigation::shell_init(shell)?;
+            return Ok(0);
+        }
+        Commands::Completions { shell } => {
+            completions::render(*shell, Cli::command())?;
+            return Ok(0);
+        }
+        Commands::Help { command } => {
+            completions::help(command, Cli::command())?;
+            return Ok(0);
+        }
+        _ => {}
     }
-    let config = if matches!(cli.command, Commands::Adopt { .. }) {
+    let config = if matches!(cli.command, Commands::Adopt { .. } | Commands::Migrate(_)) {
         config::Config::load_for_write(cli.manifest.as_deref())?
     } else {
         config::Config::load(cli.manifest.as_deref())?
     };
     match cli.command {
-        Commands::List { json } => {
-            let repositories = discovery::discover(&config)?;
-            if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&repositories)
-                        .map_err(|error| error.to_string())?
-                );
-            } else {
-                for repository in repositories {
-                    println!("{}", repository.path.display());
-                }
-            }
-        }
+        Commands::Get(options) => return get::run(&config, &options),
+        Commands::Create(options) => return get::create(&config, &options),
+        Commands::Rm(options) => return repository_ops::remove(&config, &options),
+        Commands::Migrate(options) => return repository_ops::migrate(&config, &options),
+        Commands::Trash { command } => return repository_ops::trash(&config, &command),
+        Commands::List(options) => return ghq_listing::list(&config, &options),
+        Commands::Root { all } => return ghq_listing::root(&config, all),
         Commands::Jump { query } => {
             navigation::jump(&discovery::discover(&config)?, query.as_deref())?;
         }
-        Commands::ShellInit { .. } => {}
+        Commands::ShellInit { .. } | Commands::Completions { .. } | Commands::Help { .. } => {}
         Commands::New {
             name,
             namespace,

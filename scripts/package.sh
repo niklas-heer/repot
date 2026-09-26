@@ -33,8 +33,10 @@ stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT HUP INT TERM
 cp "$binary" "$stage/repot"
 cp LICENSE README.md "$stage/"
+mkdir "$stage/assets"
+cp assets/repot.png "$stage/assets/"
 archive="repot-$version-$target.tar.gz"
-tar -czf "$destination/$archive" -C "$stage" repot LICENSE README.md
+tar -czf "$destination/$archive" -C "$stage" repot LICENSE README.md assets/repot.png
 (
   cd "$destination"
   if command -v sha256sum >/dev/null 2>&1; then

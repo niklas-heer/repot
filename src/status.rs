@@ -1,6 +1,8 @@
 //! Repository observations and conservative, reusable update plans.
 
 use std::ffi::OsStr;
+use std::fmt::Write as _;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -137,6 +139,8 @@ pub fn render(reports: &[Report], json: bool) -> Result<u8> {
             "{}",
             serde_json::to_string_pretty(reports).map_err(|error| error.to_string())?
         );
+    } else if std::io::stdout().is_terminal() {
+        print!("{}", terminal_report(reports));
     } else {
         for report in reports {
             println!(
@@ -163,6 +167,84 @@ pub fn render(reports: &[Report], json: bool) -> Result<u8> {
     } else {
         0
     })
+}
+
+fn terminal_report(reports: &[Report]) -> String {
+    use crossterm::style::{Color, Stylize};
+
+    let color = std::env::var_os("NO_COLOR").is_none()
+        && std::env::var_os("TERM").is_none_or(|term| term != "dumb");
+    let heading = format!(
+        "repot  ·  {} repositories\n\n{:<15} {:<20} REPOSITORY\n",
+        reports.len(),
+        "ACTION",
+        "BRANCH"
+    );
+    let heading = if color {
+        heading.bold().to_string()
+    } else {
+        heading
+    };
+    let rows = reports.iter().fold(String::new(), |mut rows, report| {
+        let action = if report.applied {
+            format!("done: {}", report.action)
+        } else {
+            report.action.clone()
+        };
+        let action = format!("{action:<15}");
+        let action = if color {
+            let tint = if report.failed {
+                Color::Red
+            } else if matches!(report.action.as_str(), "review" | "push") {
+                Color::Yellow
+            } else {
+                Color::Green
+            };
+            action.with(tint).to_string()
+        } else {
+            action
+        };
+        let branch = terminal_text(report.branch.as_deref().unwrap_or("(detached)"));
+        let path = terminal_text(&report.path.to_string_lossy());
+        let details = format!(
+            "  {} · +{} / -{} commits · staged {} / changed {} / untracked {} · stashes {}\n  {}\n",
+            terminal_text(&report.state),
+            report.ahead,
+            report.behind,
+            report.dirty.staged,
+            report.dirty.unstaged,
+            report.dirty.untracked,
+            report.stashes,
+            terminal_text(&report.reason)
+        );
+        let details = if color {
+            details.dim().to_string()
+        } else {
+            details
+        };
+        let _ = writeln!(rows, "{action} {branch:<20} {path}\n{details}");
+        rows
+    });
+    let applied = reports.iter().filter(|report| report.applied).count();
+    let failed = reports.iter().filter(|report| report.failed).count();
+    let attention = reports
+        .iter()
+        .filter(|report| matches!(report.action.as_str(), "review" | "push"))
+        .count();
+    format!("{heading}{rows}{applied} applied · {attention} need attention · {failed} failed\n")
+}
+
+fn terminal_text(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                character.escape_default().to_string()
+            } else {
+                character.to_string()
+            }
+        })
+        .collect()
 }
 
 pub fn probe(path: &Path, args: &[&str], timeout: Duration) -> Result<Option<String>> {
@@ -449,19 +531,16 @@ fn blocked(path: &Path, timeout: Duration) -> Result<Option<&'static str>> {
             return Ok(Some("current branch is checked out in another worktree"));
         }
     }
-    for marker in [
-        "MERGE_HEAD",
-        "CHERRY_PICK_HEAD",
-        "REVERT_HEAD",
-        "BISECT_LOG",
-        "rebase-merge",
-        "rebase-apply",
-        "sequencer",
-        "info/grafts",
-    ] {
-        let location = required(path, &["rev-parse", "--git-path", marker], timeout)?;
-        if path.join(location).exists() {
-            return Ok(Some("Git operation in progress"));
+    match crate::git_read::Layout::open(path).and_then(|layout| layout.operation_in_progress()) {
+        Some(true) => return Ok(Some("Git operation in progress")),
+        Some(false) => {}
+        None => {
+            for marker in crate::git_read::OPERATION_MARKERS {
+                let location = required(path, &["rev-parse", "--git-path", marker], timeout)?;
+                if path.join(location).exists() {
+                    return Ok(Some("Git operation in progress"));
+                }
+            }
         }
     }
     let entries = required(path, &["ls-files", "--stage", "-z"], timeout)?;
@@ -510,9 +589,10 @@ fn ignored_collision(path: &Path, target: &str, timeout: Duration) -> Result<boo
 fn owned(path: &Path, remote: &str, config: &Config, timeout: Duration) -> Result<bool> {
     let url = required(path, &["remote", "get-url", remote], timeout)?;
     Ok(remote_parts(&url).ok().is_some_and(|(_, parts)| {
-        parts
-            .first()
-            .is_some_and(|owner| config.manifest.settings.owners.contains(owner))
+        parts.len() >= 2
+            && parts
+                .first()
+                .is_some_and(|owner| config.manifest.settings.owners.contains(owner))
     }))
 }
 

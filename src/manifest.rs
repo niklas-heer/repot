@@ -75,6 +75,7 @@ pub fn adopt(
     let source = path
         .canonicalize()
         .map_err(|error| format!("resolve checkout: {error}"))?;
+    discovery::validate_public_path(&source)?;
     if lifecycle::checkout_root(&source)? != source {
         return Err("adopt expects the root of a Git checkout".into());
     }
@@ -415,6 +416,7 @@ fn restore_one(
     if !entry.restore {
         return Ok(("skip", "restoration disabled"));
     }
+    discovery::validate_public_path(target)?;
     match fs::symlink_metadata(target) {
         Ok(_) => return Ok(("skip", "destination already exists; left untouched")),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}

@@ -95,19 +95,56 @@ impl Config {
     }
 
     pub fn destination(&self, url: &str) -> Result<PathBuf> {
+        self.destination_kind(url, false)
+    }
+
+    pub fn destination_bare(&self, url: &str) -> Result<PathBuf> {
+        self.destination_kind(url, true)
+    }
+
+    fn destination_kind(&self, url: &str, bare: bool) -> Result<PathBuf> {
         let (host, components) = remote_parts(url)?;
-        let relative: PathBuf = std::iter::once(host).chain(components).collect();
+        let mut relative: PathBuf = std::iter::once(host).chain(components).collect();
+        if bare {
+            let mut filename = relative
+                .file_name()
+                .ok_or("repository path has no name")?
+                .to_owned();
+            filename.push(".git");
+            relative.set_file_name(filename);
+        }
         if let Some(existing) = self
             .roots
             .iter()
+            .rev()
             .map(|root| root.join(&relative))
             .find(|path| path.exists())
         {
-            return Ok(existing);
+            return public_destination(existing);
         }
+        let lookup_url = if url.contains("://") {
+            url.to_owned()
+        } else if let Some((authority, path)) = url.split_once(':') {
+            format!("ssh://{authority}/{}", path.trim_start_matches('/'))
+        } else {
+            format!("https://{url}")
+        };
+        if !url.starts_with("codecommit:")
+            && env::var_os("GHQ_ROOT").is_none_or(|value| value.is_empty())
+            && let Some(root) = git_config(&["--path", "--get-urlmatch", "ghq.root", &lookup_url])?
+        {
+            let cwd = env::current_dir().map_err(|error| error.to_string())?;
+            return public_destination(
+                expand_path(root.trim_end_matches('\n'), &cwd, &home()?)?.join(relative),
+            );
+        }
+        public_destination(self.primary_root()?.join(relative))
+    }
+
+    pub fn primary_root(&self) -> Result<&Path> {
         self.roots
             .last()
-            .map(|root| root.join(relative))
+            .map(PathBuf::as_path)
             .ok_or_else(|| "no repository root configured".to_owned())
     }
 
@@ -120,6 +157,11 @@ impl Config {
     }
 }
 
+fn public_destination(path: PathBuf) -> Result<PathBuf> {
+    crate::discovery::validate_public_path(&path)?;
+    Ok(path)
+}
+
 fn home() -> Result<PathBuf> {
     env::var_os("HOME")
         .filter(|value| !value.is_empty())
@@ -128,32 +170,100 @@ fn home() -> Result<PathBuf> {
 }
 
 fn roots(cwd: &Path, home: &Path) -> Result<Vec<PathBuf>> {
-    if let Some(root) = env::var_os("GHQ_ROOT").filter(|value| !value.is_empty()) {
-        return Ok(vec![expand_path(&root.to_string_lossy(), cwd, home)?]);
+    let mut paths = if let Some(roots) = env::var_os("GHQ_ROOT").filter(|value| !value.is_empty()) {
+        env::split_paths(&roots)
+            .map(|path| {
+                let path = if path.as_os_str().is_empty() {
+                    Path::new(".")
+                } else {
+                    &path
+                };
+                expand_path(&path.to_string_lossy(), cwd, home)
+            })
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        let configured = git_config(&["--null", "--path", "--get-regexp", "^ghq\\.(.*\\.)?root$"])?;
+        let mut values = Vec::new();
+        let mut scoped = Vec::new();
+        for item in configured
+            .as_deref()
+            .unwrap_or_default()
+            .split('\0')
+            .filter(|value| !value.is_empty())
+        {
+            let (key, value) = item.split_once('\n').ok_or("invalid root configuration")?;
+            let path = expand_path(value, cwd, home)?;
+            if key == "ghq.root" {
+                values.push(path);
+            } else {
+                scoped.push(path);
+            }
+        }
+        values.reverse();
+        if values.is_empty() {
+            values.push(home.join("ghq"));
+        }
+        values.extend(scoped);
+        values
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    for path in &mut paths {
+        *path = path.canonicalize().unwrap_or_else(|_| normalize_path(path));
     }
+    paths.retain(|path| seen.insert(path.clone()));
+    // Existing repot callers use the last root as primary. Preserve that API
+    // while representing ghq's complete ordering by reversing at this boundary.
+    paths.reverse();
+    Ok(paths)
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut result = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                result.pop();
+            }
+            component => result.push(component.as_os_str()),
+        }
+    }
+    result
+}
+
+pub fn git_value(key: &str) -> Result<Option<String>> {
+    git_config(&["--get", key])
+        .map(|value| value.map(|value| value.trim_end_matches('\n').to_owned()))
+}
+
+pub fn git_bool(key: &str) -> Result<Option<bool>> {
+    git_config(&["--bool", "--get", key])
+        .map(|value| value.map(|value| value.trim_end_matches('\n') == "true"))
+}
+
+pub fn git_url_value(key: &str, url: &str) -> Result<Option<String>> {
+    if url.starts_with("codecommit:") {
+        return Ok(None);
+    }
+    git_config(&["--get-urlmatch", key, url])
+        .map(|value| value.map(|value| value.trim_end_matches('\n').to_owned()))
+}
+
+fn git_config(args: &[&str]) -> Result<Option<String>> {
     let output = Command::new("git")
-        .args(["config", "--null", "--get-all", "ghq.root"])
+        .arg("config")
+        .args(args)
         .output()
-        .map_err(|error| format!("read ghq roots: {error}"))?;
+        .map_err(|error| format!("read Git configuration: {error}"))?;
     if output.status.code() == Some(1) {
-        return Ok(vec![home.join("ghq")]);
+        return Ok(None);
     }
     if !output.status.success() {
-        return Err("could not read Git configuration for ghq.root".to_owned());
+        return Err("could not read Git configuration".to_owned());
     }
     let text = String::from_utf8(output.stdout)
-        .map_err(|_| "ghq.root contains a non-UTF-8 path".to_owned())?;
-    let roots: Result<Vec<_>> = text
-        .split('\0')
-        .filter(|value| !value.is_empty())
-        .map(|value| expand_path(value, cwd, home))
-        .collect();
-    let roots = roots?;
-    if roots.is_empty() {
-        Ok(vec![home.join("ghq")])
-    } else {
-        Ok(roots)
-    }
+        .map_err(|_| "Git configuration contains non-UTF-8 data".to_owned())?;
+    Ok(Some(text))
 }
 
 fn expand_path(value: &str, base: &Path, home: &Path) -> Result<PathBuf> {
@@ -207,6 +317,10 @@ fn expand_path(value: &str, base: &Path, home: &Path) -> Result<PathBuf> {
 
 /// Parse supported forge URLs without ever including a potentially secret URL in errors.
 pub fn remote_parts(url: &str) -> Result<(String, Vec<String>)> {
+    if let Some(codecommit) = crate::remote_extra::codecommit(url) {
+        let codecommit = codecommit?;
+        return Ok((codecommit.region, vec![codecommit.repository]));
+    }
     let invalid =
         || "remote must be a credential-free HTTPS, SSH or host/owner/repository URL".to_owned();
     if url.is_empty()
@@ -219,6 +333,7 @@ pub fn remote_parts(url: &str) -> Result<(String, Vec<String>)> {
     let (authority, path, ssh) = if let Some(rest) = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))
+        .or_else(|| url.strip_prefix("git://"))
     {
         let (authority, path) = rest.split_once('/').ok_or_else(invalid)?;
         (authority, path, false)
@@ -266,7 +381,7 @@ pub fn remote_parts(url: &str) -> Result<(String, Vec<String>)> {
     }
     let path = path.strip_suffix(".git").unwrap_or(path);
     let components: Vec<String> = path.split('/').map(str::to_owned).collect();
-    if components.len() < 2
+    if components.is_empty()
         || components.iter().any(|part| {
             part.is_empty()
                 || part == "."

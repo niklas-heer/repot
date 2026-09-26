@@ -4,6 +4,7 @@
 mod tests {
 
     use std::env;
+    use std::fmt::Write as _;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Output};
@@ -200,5 +201,147 @@ mod tests {
     #[test]
     fn fish_integration_preserves_paths_status_and_cleans_up() {
         shell_test("fish");
+    }
+
+    fn mutation_fixture(fixture: &Fixture) -> String {
+        fixture.repo("host/owner/recover");
+        let archived = fixture.repot(&["rm", "recover", "--json"]);
+        assert!(
+            archived.status.success(),
+            "{}",
+            String::from_utf8_lossy(&archived.stderr)
+        );
+        let report: serde_json::Value =
+            serde_json::from_slice(&archived.stdout).expect("archive report");
+        let id = report[0]["id"].as_str().expect("archive ID").to_owned();
+        let remote = fixture.directory.path().join("remote");
+        assert!(
+            fixture
+                .command("git")
+                .args(["init", "--bare", "--quiet"])
+                .arg(&remote)
+                .status()
+                .expect("bare init")
+                .success()
+        );
+        let rewrite = format!("url.file://{}.insteadOf", remote.display());
+        assert!(
+            fixture
+                .command("git")
+                .args([
+                    "config",
+                    "--global",
+                    &rewrite,
+                    "https://example.test/team/cloned"
+                ])
+                .status()
+                .expect("URL rewrite")
+                .success()
+        );
+        id
+    }
+
+    fn mutation_shell_test(shell: &str) {
+        if Command::new(shell).arg("--version").output().is_err() {
+            eprintln!("skipping optional {shell} shell: executable unavailable");
+            return;
+        }
+        let fixture = Fixture::new();
+        let id = mutation_fixture(&fixture);
+        let init = fixture.repot(&["shell-init", shell]);
+        assert!(init.status.success());
+        let mut script = String::from_utf8(init.stdout).expect("shell script");
+        let commands = [
+            ("NEW", "repot new scratchwork".to_owned()),
+            (
+                "CREATE",
+                "repot create example.test/team/created".to_owned(),
+            ),
+            (
+                "GET",
+                "repot get --look example.test/team/cloned".to_owned(),
+            ),
+            ("RESTORE", format!("repot trash restore {id}")),
+            ("DRY", "repot new ignored --dry-run".to_owned()),
+        ];
+        for (name, command) in &commands {
+            writeln!(script, "\n{command}").expect("append command");
+            if shell == "nu" {
+                writeln!(script, "$env.PWD | save --force $env.REPOT_TEST_{name}")
+                    .expect("append Nu capture");
+            } else {
+                writeln!(script, "printf '%s' \"$PWD\" > \"$REPOT_TEST_{name}\"")
+                    .expect("append shell capture");
+            }
+        }
+        let script_path = fixture.directory.path().join("mutations-test");
+        fs::write(&script_path, script).expect("mutation script");
+        let binary_dir = Path::new(env!("CARGO_BIN_EXE_repot"))
+            .parent()
+            .expect("binary directory");
+        let path = env::join_paths(
+            std::iter::once(binary_dir.to_path_buf())
+                .chain(env::split_paths(&env::var_os("PATH").unwrap_or_default())),
+        )
+        .expect("test PATH");
+        let mut command = fixture.command(shell);
+        command.arg(&script_path).env("PATH", path);
+        for (name, _) in &commands {
+            command.env(
+                format!("REPOT_TEST_{name}"),
+                fixture.directory.path().join(name),
+            );
+        }
+        let output = command.output().expect("shell mutation sequence");
+        assert!(
+            output.status.success(),
+            "{shell}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        for (name, relative) in [
+            ("NEW", "local/scratch/scratchwork"),
+            ("CREATE", "example.test/team/created"),
+            ("GET", "example.test/team/cloned"),
+            ("RESTORE", "host/owner/recover"),
+            ("DRY", "host/owner/recover"),
+        ] {
+            let expected = fixture
+                .root
+                .join(relative)
+                .canonicalize()
+                .expect("created checkout");
+            assert_eq!(
+                fs::read(fixture.directory.path().join(name)).expect("shell directory"),
+                expected.as_os_str().as_encoded_bytes(),
+                "{shell} {name}"
+            );
+        }
+        assert!(!fixture.root.join("local/scratch/ignored").exists());
+        assert_eq!(
+            fs::read_dir(fixture.directory.path().join("tmp"))
+                .expect("temporary handoffs")
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn bash_follows_create_clone_and_restore_handoffs() {
+        mutation_shell_test("bash");
+    }
+
+    #[test]
+    fn zsh_follows_create_clone_and_restore_handoffs() {
+        mutation_shell_test("zsh");
+    }
+
+    #[test]
+    fn fish_follows_create_clone_and_restore_handoffs() {
+        mutation_shell_test("fish");
+    }
+
+    #[test]
+    fn nushell_follows_create_clone_and_restore_handoffs() {
+        mutation_shell_test("nu");
     }
 }

@@ -4,10 +4,11 @@ use std::env;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
-use std::process::{Command, Stdio};
 
 use crate::Result;
 use crate::discovery::Repository;
+
+mod picker;
 
 pub fn jump(repositories: &[Repository], query: Option<&str>) -> Result<()> {
     let query = query.unwrap_or_default();
@@ -41,13 +42,16 @@ pub fn jump(repositories: &[Repository], query: Option<&str>) -> Result<()> {
         exact
     };
     match candidates.as_slice() {
-        [] => Err("no repositories match; use `repot list` to see known repositories".into()),
         [repo] => handoff(&repo.path),
-        _ if !io::stdin().is_terminal() => Err(format!(
+        _ if io::stdin().is_terminal() && !repositories.is_empty() => {
+            let selected = picker::pick(repositories, query)?;
+            handoff(&selected)
+        }
+        [] => Err("no repositories match; use `repot list` to see known repositories".into()),
+        _ => Err(format!(
             "{} repositories match; supply an exact name or run `repot jump` in a terminal",
             candidates.len()
         )),
-        _ => pick(&candidates, query),
     }
 }
 
@@ -56,50 +60,6 @@ fn fuzzy_matches(path: &str, query: &str) -> bool {
     query
         .chars()
         .all(|letter| letters.any(|item| item == letter))
-}
-
-fn pick(candidates: &[&Repository], query: &str) -> Result<()> {
-    let mut child = Command::new("fzf")
-        .args([
-            "--read0",
-            "--print0",
-            "--no-multi",
-            "--tiebreak=index",
-            "--prompt=repot> ",
-            "--query",
-            query,
-        ])
-        .env_remove("FZF_DEFAULT_OPTS")
-        .env_remove("FZF_DEFAULT_OPTS_FILE")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .map_err(|error| {
-            format!("cannot start fzf ({error}); install fzf or supply an exact name")
-        })?;
-    let input_result = child.stdin.take().map_or_else(
-        || Err(io::Error::other("fzf input pipe is unavailable")),
-        |mut input| {
-            for repo in candidates {
-                input.write_all(repo.path.as_os_str().as_encoded_bytes())?;
-                input.write_all(&[0])?;
-            }
-            Ok(())
-        },
-    );
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("cannot wait for fzf: {error}"))?;
-    if !output.status.success() {
-        return Err("repository selection cancelled or fzf failed".into());
-    }
-    input_result.map_err(|error| format!("cannot send repository paths to fzf: {error}"))?;
-    let selected = output.stdout.strip_suffix(&[0]).unwrap_or(&output.stdout);
-    let repo = candidates
-        .iter()
-        .find(|repo| repo.path.as_os_str().as_encoded_bytes() == selected)
-        .ok_or_else(|| "fzf returned an unknown repository path".to_owned())?;
-    handoff(&repo.path)
 }
 
 pub fn handoff(path: &Path) -> Result<()> {

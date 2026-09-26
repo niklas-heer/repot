@@ -3,10 +3,10 @@ schema_version = 1
 id = "01M3FNVVA9SKEFPTXZVADZGXPC"
 title = "Use bounded Git CLI subprocesses from Rust"
 date = "2026-09-26"
-status = "accepted"
+status = "superseded"
 tags = ["architecture", "git"]
 supersedes = []
-superseded_by = []
+superseded_by = ["01M3FTDH95X899C1P70XP7RA91"]
 depends_on = []
 related_to = []
 +++

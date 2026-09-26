@@ -3,10 +3,10 @@ schema_version = 1
 id = "01M3FNVVATYBSP10J7Q1NW3JX4"
 title = "Use deterministic selection with optional fzf"
 date = "2026-09-26"
-status = "accepted"
+status = "superseded"
 tags = ["ux"]
 supersedes = []
-superseded_by = []
+superseded_by = ["01M3FTDH8X48NY3C999BG2SV5T"]
 depends_on = []
 related_to = []
 +++

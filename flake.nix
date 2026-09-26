@@ -18,7 +18,7 @@
           channel = (builtins.fromTOML (builtins.readFile ./rust-toolchain.toml)).toolchain.channel;
           toolchain = pkgs.rust-bin.stable.${channel}.minimal;
           platform = pkgs.makeRustPlatform { cargo = toolchain; rustc = toolchain; };
-          shells = with pkgs; [ bash zsh fish nushell fzf ];
+          shells = with pkgs; [ bash zsh fish nushell ];
           package = platform.buildRustPackage {
             pname = "repot";
             version = manifest.package.version;
@@ -26,7 +26,7 @@
               root = ./.;
               fileset = pkgs.lib.fileset.unions [
                 ./Cargo.toml ./Cargo.lock ./rust-toolchain.toml ./clippy.toml
-                ./src ./tests ./scripts ./Formula ./README.md ./LICENSE
+                ./src ./tests ./examples ./assets ./scripts ./Formula ./README.md ./LICENSE
               ];
             };
             cargoLock.lockFile = ./Cargo.lock;

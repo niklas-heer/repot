@@ -24,8 +24,11 @@ pub fn discover(config: &Config) -> Result<Vec<Repository>> {
             Some(path) => config.expand_path(path)?,
             None => config.destination(&entry.url)?,
         };
-        if is_repository(&path) {
-            paths.insert(canonical(&path)?);
+        if !private_path(&path) && is_repository(&path) {
+            let path = canonical(&path)?;
+            if !private_path(&path) {
+                paths.insert(path);
+            }
         }
     }
     Ok(repositories(paths))
@@ -57,19 +60,51 @@ fn is_repository(path: &Path) -> bool {
     git.is_dir() || git.is_file()
 }
 
+/// Private staging and archived repositories are never active checkouts.
+pub fn private_path(path: &Path) -> bool {
+    path.components().any(|component| {
+        let name = component.as_os_str().to_string_lossy();
+        name == ".repot-trash"
+            || [
+                ".repot-clone-",
+                ".repot-new-",
+                ".repot-create-",
+                ".repot-restore-",
+            ]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+    })
+}
+
+pub fn validate_public_path(path: &Path) -> Result<()> {
+    let resolved = path
+        .ancestors()
+        .find_map(|ancestor| ancestor.canonicalize().ok());
+    if private_path(path) || resolved.as_deref().is_some_and(private_path) {
+        return Err("repository paths cannot contain reserved repot staging or archive components (.repot-clone-*, .repot-new-*, .repot-create-*, .repot-restore-* or .repot-trash)".into());
+    }
+    Ok(())
+}
+
 fn walk(start: &Path, exclude: bool, paths: &mut BTreeSet<PathBuf>) -> Result<()> {
     if !start.exists() {
         return Ok(());
     }
     let mut pending = vec![start.to_path_buf()];
     while let Some(path) = pending.pop() {
+        if private_path(&path) {
+            continue;
+        }
         let metadata = fs::symlink_metadata(&path)
             .map_err(|error| format!("inspect {}: {error}", path.display()))?;
         if metadata.is_symlink() || !metadata.is_dir() {
             continue;
         }
         if is_repository(&path) {
-            paths.insert(canonical(&path)?);
+            let path = canonical(&path)?;
+            if !private_path(&path) {
+                paths.insert(path);
+            }
             continue;
         }
         let entries = match fs::read_dir(&path) {

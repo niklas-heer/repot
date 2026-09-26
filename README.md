@@ -1,15 +1,22 @@
+<p align="center"><img src="assets/repot.png" width="112" alt="repot: a Git branch sprouting from a terracotta pot"></p>
+
 # repot
 
 Keep every Git repository on a machine organised, current and portable.
 
-repot builds on the [ghq](https://github.com/x-motemen/ghq) directory tree (`<root>/<host>/<owner>/<repo>`). It adds what ghq leaves out: jumping to any repository with a fuzzy picker, safely updating everything at once (including returning to `main` after a branch was merged on GitHub), scratch projects that can be published into the tree later, finding stray repositories, and restoring a machine from a manifest kept in your dotfiles.
+repot is a Rust Git repository organiser and a replacement for ghq's Git workflows.
+Clone, find and jump between projects, safely update your checkouts, publish a
+scratch project, or restore a machine from your dotfiles. It keeps the familiar
+`<root>/<host>/<owner>/<repo>` tree and existing ghq configuration.
 
-> **Status:** all five implementation milestones are complete, including release automation. See [BUILD_BRIEF.md](BUILD_BRIEF.md) for safety rules and scope. A release is published only when a matching version tag is pushed.
+> **Status:** all six implementation milestones are complete, including the Git-focused ghq replacement, embedded picker, measured native Git reads and project icon. See [BUILD_BRIEF.md](BUILD_BRIEF.md) for safety rules and scope.
 
 ## Install
 
-repot supports Linux and macOS on Intel/AMD and ARM64. Git must be available;
-install `fzf` for interactive ambiguous selections and `gh` or `glab` for publishing.
+repot supports Linux and macOS on Intel/AMD and ARM64. The fuzzy picker is built
+into the binary: neither ghq nor fzf is required. Git handles network operations,
+authentication and checkout changes; install `gh` or `glab` only for publishing
+and optional forge-specific merge evidence. Nix and Homebrew supply Git.
 
 From a checkout with the pinned Rust toolchain:
 
@@ -42,37 +49,122 @@ brew install --HEAD niklas-heer/repot/repot
 
 | Command | Purpose |
 | --- | --- |
+| `repot get` / `repot clone` | Clone one or many repositories; safely update with `-u` |
+| `repot root [--all]` | Show primary or all configured roots |
 | `repot list [--json]` | List discovered and registered repositories |
 | `repot jump` | Fuzzy-pick a repository and `cd` into it |
 | `repot status` / `repot sync` | See every repository's state; fast-forward what is safe |
 | `repot new` / `repot publish` | Start a local scratch project; later create its remote and move it into the tree |
 | `repot find` / `repot adopt` | Discover repositories outside the tree and bring them in |
 | `repot restore` | Clone missing entries from your manifest on a new machine |
+| `repot create` | Create an empty Git repository directly in the host/owner/name tree |
+| `repot migrate` | Move and register an existing checkout |
+| `repot rm` / `repot trash` | Archive a checkout without losing work; list or restore archives |
 | `repot shell-init <shell>` | Print shell integration |
+| `repot completions <shell>` | Generate bash, zsh, fish or Nushell completions |
 
 repot never commits, stashes, resets or force-pushes, and only updates a repository by fast-forward.
 
 ## Discovery and navigation
 
-Git is required. Roots follow ghq: `GHQ_ROOT`, then all Git `ghq.root` values,
-then `~/ghq`. The final configured root receives new checkouts. Registered manifest
-paths are included too. The manifest defaults to `$XDG_CONFIG_HOME/repot/repos.toml`
+Roots follow ghq: `GHQ_ROOT`, then all Git `ghq.root` values, then `~/ghq`.
+`GHQ_ROOT` accepts a colon-separated path list on Unix, with its first root primary;
+otherwise the last `ghq.root` value is primary. URL-specific `ghq.<url>.root`
+settings are supported and existing checkouts are reused across roots. Registered
+manifest paths are included too. The manifest defaults to `$XDG_CONFIG_HOME/repot/repos.toml`
 (or `~/.config/repot/repos.toml`); override it with `--manifest PATH`.
 
 ```sh
 repot list --json
+repot list -p --exact repot
 repot jump repot
 # Add the appropriate integration to your shell configuration:
 eval "$(repot shell-init bash)"    # use zsh in zsh
 repot shell-init fish | source    # fish
 # Nushell: save `repot shell-init nu` to a file and source that file.
+# Optional completions (save/source using your shell's normal convention):
+repot completions nu
 ```
 
-An exact or unique fuzzy match works without extra tools. Ambiguous interactive
-selection requires `fzf`; scripts must provide an unambiguous query. Without the
-shell wrapper, `jump` prints the selected path. Directory symlinks are not traversed;
+The embedded picker uses Nucleo matching and a Ratatui interface. Type to filter,
+use arrows or Ctrl+N/P to choose, Enter to jump, Escape or Ctrl+C to cancel, and
+Ctrl+U to clear the query. It highlights matches, shows the selected full path,
+handles resizing and respects `NO_COLOR`. Exact and unique matches jump directly;
+noninteractive scripts must provide an unambiguous query. Without the shell
+wrapper, `jump` prints the selected path. Directory symlinks are not traversed;
 linked worktrees can be discovered or registered, and nested submodules are not
 listed separately.
+
+`list` prints root-relative paths by default, `-p` prints absolute paths, `-e`
+matches exact suffixes, and `--unique` prints the shortest unambiguous names.
+JSON retains absolute paths. Bare repositories appear in `list`; bulk status and
+sync operate on working checkouts. `root --all` prints roots in priority order.
+
+## Replace ghq
+
+Existing checkouts stay where they are. Use repot for the same Git tasks:
+
+```sh
+repot get owner/project
+repot get -p github.com/owner/project       # SSH
+repot get --shallow --branch main owner/project
+repot get --partial blobless owner/large-project
+repot get --bare owner/project
+repot get --update owner/project           # fast-forward only
+repot list | repot get --parallel          # newline-separated import
+repot get --look owner/project             # cd through shell-init
+repot create owner/new-project             # init only; no remote or commit
+repot migrate ~/Downloads/project -y --dry-run
+```
+
+`get` also accepts multiple arguments, `repo@branch`, `--partial treeless`,
+`--silent`, `--no-recursive`, and `--vcs git` (or `github`). Short repository
+names honor `ghq.user`, `github.user`, `ghq.completeUser`, and `ghq.defaultHost`.
+New clones include submodules by default; `--no-recursive` disables that.
+Clones stage privately before an atomic no-overwrite move. Parallel imports use
+bounded workers and report failures while completing independent repositories.
+`--json` provides structured results and `--timeout` bounds Git operations.
+
+GitHub webpage paths resolve to their repository root; GitLab subgroup paths stay
+intact. SCP-style SSH, HTTP(S) and `git://` URLs are supported. Failed HTTP(S)
+clones can resolve Git `go-import` metadata with bounded requests, no redirects,
+and verified import prefixes. `--vcs git` or URL-scoped `ghq.<url>.vcs = git`
+bypasses that fallback. A dry-run does not contact a vanity host, so its final
+destination can remain unresolved until cloning.
+
+AWS `codecommit://[profile@]repo` and `codecommit::region://[profile@]repo` retain
+ghq's region/repository layout. Region selection uses the explicit URL, then
+`AWS_REGION`, `AWS_DEFAULT_REGION`, and finally bounded `aws configure get region`.
+These optional cloud URLs require the Git CodeCommit helper for transport. The
+AWS CLI is needed only for the fallback region lookup. Ordinary Git hosting
+requires neither. Credentials belong in Git/AWS helpers,
+never in repository URLs or repot's manifest.
+
+Every mutating command supports `--dry-run`. Updates use repot's safety checks:
+dirty, diverged, linked/shared or submodule checkouts may require review. `get -u`
+does not switch branches; use `sync` for proven merged-branch return. Bare updates
+fetch refs atomically without forcing or pruning. Creation refuses even an empty
+existing directory. The target is Git workflows, not ghq's legacy VCS backends.
+
+Removal preserves work instead of deleting it permanently:
+
+```sh
+repot rm owner/old-project --dry-run
+repot rm owner/old-project
+repot trash list
+repot trash restore repo-ARCHIVE_ID
+```
+
+Archives live in `.repot-trash` under the relevant root and are excluded from
+normal discovery. Dirty files, ignored files, commits, stashes and index contents
+move together. Restoration refuses an occupied destination. Both operations
+require a standalone checkout on the same filesystem; dependent worktrees and
+object databases require manual handling.
+
+Path components beginning with `.repot-clone-`, `.repot-new-`, `.repot-create-`
+or `.repot-restore-`, and the exact component `.repot-trash`, are reserved for
+internal staging and archives. Creation, import and registration reject these
+names, including in dry-runs, so a successful operation remains discoverable.
 
 ## Status and safe updates
 
@@ -196,6 +288,12 @@ Runtime dependencies are scoped to concrete needs: `serde`/`serde_json` for repo
 `toml`/`toml_edit` for validated, comment-preserving manifests, `tempfile` for staging,
 `nix` for Unix process-group cancellation, and `rustix` for atomic no-overwrite moves.
 The existing `clap` dependency handles the command interface.
+`ratatui`, `crossterm`, `nucleo-matcher` and `signal-hook` provide the embedded
+picker and terminal cleanup. `gix` reads supported Git metadata in-process; Git
+remains authoritative for status and mutations. `portable-pty` is a test-only
+dependency for actual terminal and shell workflows.
+`ureq` with Rustls and `html5gum` implement bounded Go vanity metadata resolution;
+`clap_complete` and `clap_complete_nushell` generate shell completions.
 
 Tests invoke the real binary with temporary homes, checkouts and local bare remotes.
 Forge responses and failures are controlled by local shims; no test publishes to a
@@ -203,16 +301,26 @@ real forge. Four deterministic seeds (`7`, `42`, `2026`, `65537`) run 64 persist
 Git transitions, checking dry-run immutability, commit ancestry, local-file/index
 preservation and failure recovery. Failures include the seed and action trace.
 Shell tests exercise supported installed shells; Nix checks supply all four.
+The picker also has deterministic input-state simulations and PTY tests for
+selection, cancellation, resizing, terminal restoration and shell handoffs.
 
-For a release, update the Cargo package version and lockfile, commit it, then push
-the matching `vX.Y.Z` tag. The workflow first runs Linux Dagger, native macOS and
-Nix checks, tests and packages four native targets, and publishes only after all
-jobs pass. Its manual dispatch runs verification and uploads workflow artifacts
-without publishing a release. Archive tests extract and execute the real binary,
-verify documentation and checksums, and check formula architecture mappings.
+## Performance
 
-Lasting technical choices are recorded in [decisions/](decisions/) with [vrdx](https://github.com/niklas-heer/vrdx).
+On one macOS ARM64 machine with 24 small local repositories, nine warm-cache
+measurements produced these medians. Listing uses `list -p`; status uses
+`status --no-fetch --json --jobs 4`.
 
-## License
+| Root selection | repot list | ghq list | repot status | Baseline status |
+| --- | ---: | ---: | ---: | ---: |
+| `GHQ_ROOT` | 3.44 ms | 5.05 ms | 576 ms | 888 ms |
+| Git `ghq.root` | 7.15 ms | 12.65 ms | 580 ms | 901 ms |
 
-[MIT](LICENSE)
+Both root modes produced matching sorted listings and identical baseline/current
+status JSON. The baseline is repot revision `e037a66`; ghq 1.10.1 has no equivalent
+full status command. Native metadata reads replace repeated Git subprocesses for
+operation-marker lookups, while other changes also affect full-command timings.
+
+These local synthetic measurements cover process startup and cached filesystem
+work, without network cloning. [Methodology and raw samples](docs/benchmarks/README.md)
+include executable hashes, a reproducible script and an isolated native/Git
+microbenchmark.

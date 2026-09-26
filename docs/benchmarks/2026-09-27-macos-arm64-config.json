@@ -1,0 +1,129 @@
+{
+  "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "architecture": "arm64",
+  "repositories": 24,
+  "tracked_files_per_repository": 16,
+  "root_mode": "config",
+  "baseline_revision": "e037a668af77c1007f85233c2a1decc29d126175",
+  "repetitions": 9,
+  "warmups": 2,
+  "status_jobs": 4,
+  "cache": "warm OS caches; no cache dropping",
+  "network": "none",
+  "parity": "identical sorted full-path lists; identical baseline/current status JSON",
+  "versions": {
+    "git": "git version 2.55.0",
+    "ghq": "ghq version 1.10.1 (rev:f600896)",
+    "repot": "repot 0.1.0"
+  },
+  "binary_bytes": {
+    "repot": 6982800,
+    "ghq": 9504322,
+    "baseline": 1918928
+  },
+  "binary_sha256": {
+    "repot": "2ce6c7e7489736da293182e3bd9a077c08815ccf6ab9ab0ace449ac15ec5f324",
+    "ghq": "2e522e28a0fa964af312e88255ac49802b5b7e2d60d25e5d1761420e803a542c",
+    "baseline": "1fa6cb129805aa3c223e982ae5820a316b6cd7a5223d9d676166856bf1af2317"
+  },
+  "measurements": {
+    "ghq_list": {
+      "median_ms": 12.653375,
+      "min_ms": 12.401709,
+      "max_ms": 14.329375,
+      "samples_ms": [
+        12.653375,
+        13.430042,
+        12.617583,
+        12.401709,
+        12.512541,
+        12.868833,
+        12.792042,
+        12.529208,
+        14.329375
+      ]
+    },
+    "repot_list": {
+      "median_ms": 7.1505,
+      "min_ms": 7.039833,
+      "max_ms": 7.662541,
+      "samples_ms": [
+        7.662541,
+        7.31275,
+        7.120041,
+        7.221625,
+        7.1505,
+        7.117375,
+        7.095209,
+        7.039833,
+        7.429625
+      ]
+    },
+    "repot_status": {
+      "median_ms": 579.582083,
+      "min_ms": 570.035375,
+      "max_ms": 649.217667,
+      "samples_ms": [
+        585.266,
+        581.493083,
+        579.582083,
+        571.203541,
+        570.035375,
+        649.217667,
+        575.205791,
+        575.729542,
+        580.290958
+      ]
+    },
+    "baseline_status": {
+      "median_ms": 901.466458,
+      "min_ms": 884.261708,
+      "max_ms": 963.680625,
+      "samples_ms": [
+        891.826084,
+        901.466458,
+        884.261708,
+        907.257167,
+        963.680625,
+        910.342292,
+        910.130042,
+        896.540959,
+        888.468667
+      ]
+    }
+  },
+  "limitations": [
+    "One machine and synthetic small clean repositories",
+    "Includes process startup and captured stdout",
+    "ghq has no equivalent status command; status compares repot versions",
+    "New repot includes other concurrent feature changes; not an isolated gix microbenchmark"
+  ],
+  "layout_microbenchmark": {
+    "git_samples_ms": [
+      745.096291,
+      710.5504999999999,
+      742.378583,
+      702.671334,
+      709.262875,
+      678.982625,
+      687.930042,
+      749.073792,
+      692.01575
+    ],
+    "limitations": "Git child startup included; production timeout runner polling excluded",
+    "native_samples_ms": [
+      4.880542,
+      3.517375,
+      4.204625,
+      14.664750000000002,
+      4.050459,
+      3.103167,
+      3.9227079999999996,
+      3.079416,
+      3.5441249999999997
+    ],
+    "repositories": 24,
+    "scope": "Eight operation marker paths and existence checks; identical results"
+  },
+  "measured_at": "2026-09-26T21:59:52.756946+00:00"
+}
