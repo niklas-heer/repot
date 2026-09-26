@@ -6,9 +6,10 @@ rust-version = "1.97.1"
 description = "Keep every Git repository on a machine organised, current and portable"
 license = "MIT"
 repository = "https://github.com/niklas-heer/repot"
-include = ["/src/**/*.rs", "/tests/*.rs", "/examples/**/*.rs", "/scripts/*", "/assets/*", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE", "/rust-toolchain.toml", "/mise.toml", "/clippy.toml"]
+include = ["/src/**/*.rs", "/tests/*.rs", "/examples/**/*.rs", "/scripts/*", "/assets/*", "/docs/**/*", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE", "/rust-toolchain.toml", "/mise.toml", "/clippy.toml"]
 
 [dependencies]
+kdl = { version = "6.7.1", default-features = false }
 clap_complete = { version = "4.6.11", default-features = false }
 clap_complete_nushell = { version = "4.6.2", default-features = false }
 gix = { version = "0.88.0", default-features = false, features = ["sha1", "sha256"] }

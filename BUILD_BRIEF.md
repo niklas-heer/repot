@@ -1,6 +1,6 @@
 # repot build brief
 
-Created 2026-09-26. This document records what repot should become, the rules it must keep, and the order of work. Status: all six implementation milestones are complete, including the expanded Git-focused ghq replacement, embedded picker, measured native Git reads and project icon. Release publication remains an explicit version-tag action.
+Created 2026-09-26. This document records what repot should become, the rules it must keep, and the order of work. Status: all six original implementation milestones are complete. The first release is being prepared with the user-requested KDL manifest support and a developer-focused documentation pass. Publication is authorized after the full release rehearsal and artifact checks pass.
 
 ## Intent
 
@@ -77,7 +77,10 @@ A child process cannot change its parent shell's directory. `repot shell-init` p
 
 ### Manifest
 
-A TOML file kept in dotfiles, for example `~/.config/repot/repos.toml`. A first sketch:
+A TOML or KDL v2 file kept in dotfiles, for example
+`~/.config/repot/repos.toml` or `~/.config/repot/repos.kdl`. Both formats describe
+the same settings and repositories. If both default files exist, `--manifest`
+must select one explicitly. New manifests default to TOML. For example:
 
 ```toml
 [settings]
@@ -93,6 +96,16 @@ restore = false                   # restored by chezmoi itself
 ```
 
 Entries without `path` live at their tree location. `repot restore` never touches a path that already exists.
+
+The equivalent KDL manifest is:
+
+```kdl
+settings {
+    owners "niklas-heer"
+}
+repo "https://github.com/niklas-heer/repot"
+repo "https://github.com/niklas-heer/dotfiles" path="~/.local/share/chezmoi" restore=#false
+```
 
 ### Profiles
 

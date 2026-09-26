@@ -58,25 +58,20 @@ impl Config {
     fn load_inner(manifest: Option<&Path>, allow_missing: bool) -> Result<Self> {
         let cwd = env::current_dir().map_err(|error| format!("read current directory: {error}"))?;
         let home = home()?;
-        let manifest_path = manifest.map_or_else(
-            || {
-                env::var_os("XDG_CONFIG_HOME")
-                    .map_or_else(|| home.join(".config"), PathBuf::from)
-                    .join("repot/repos.toml")
-            },
-            Path::to_path_buf,
-        );
+        let manifest_path =
+            manifest.map_or_else(|| default_manifest(&home), |path| Ok(path.to_path_buf()))?;
         let manifest_path = if manifest_path.is_absolute() {
             manifest_path
         } else {
             cwd.join(manifest_path)
         };
         let manifest = match fs::read_to_string(&manifest_path) {
-            Ok(text) => toml::from_str(&text)
+            Ok(text) => crate::manifest_format::parse(&manifest_path, &text)
                 .map_err(|_| format!("invalid manifest at {}", manifest_path.display()))?,
             Err(error)
                 if error.kind() == std::io::ErrorKind::NotFound
-                    && (manifest.is_none() || allow_missing) =>
+                    && (manifest.is_none() || allow_missing)
+                    && !manifest_exists(&manifest_path)? =>
             {
                 Manifest::default()
             }
@@ -154,6 +149,29 @@ impl Config {
             .parent()
             .ok_or_else(|| "manifest has no parent directory".to_owned())?;
         expand_path(path, base, &home()?)
+    }
+}
+
+fn default_manifest(home: &Path) -> Result<PathBuf> {
+    let directory = env::var_os("XDG_CONFIG_HOME")
+        .map_or_else(|| home.join(".config"), PathBuf::from)
+        .join("repot");
+    let toml = directory.join("repos.toml");
+    let kdl = directory.join("repos.kdl");
+    match (manifest_exists(&toml)?, manifest_exists(&kdl)?) {
+        (true, true) => {
+            Err("both repos.toml and repos.kdl exist; choose one with --manifest".into())
+        }
+        (false, true) => Ok(kdl),
+        _ => Ok(toml),
+    }
+}
+
+fn manifest_exists(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("inspect manifest {}: {error}", path.display())),
     }
 }
 

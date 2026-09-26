@@ -88,6 +88,39 @@ mod tests {
         success(&output);
     }
 
+    fn packaged_files() -> Vec<String> {
+        let base = root();
+        let mut files: Vec<String> = ["LICENSE", "README.md", "assets/repot.png", "repot"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let mut directories = vec![base.join("docs")];
+        while let Some(directory) = directories.pop() {
+            for entry in fs::read_dir(directory).expect("documentation directory") {
+                let entry = entry.expect("documentation entry");
+                let kind = entry.file_type().expect("documentation type");
+                if kind.is_dir() {
+                    directories.push(entry.path());
+                } else {
+                    assert!(
+                        kind.is_file(),
+                        "release documentation must be regular files"
+                    );
+                    files.push(
+                        entry
+                            .path()
+                            .strip_prefix(&base)
+                            .expect("relative documentation path")
+                            .to_string_lossy()
+                            .into_owned(),
+                    );
+                }
+            }
+        }
+        files.sort();
+        files
+    }
+
     #[test]
     fn native_archive_contains_a_working_executable_documentation_and_valid_checksum() {
         let temp = tempfile::tempdir().expect("packaging fixture");
@@ -110,15 +143,27 @@ mod tests {
         let archive = destination.join(&name);
         assert!(archive.is_file());
         verify_checksums(&destination, &format!("{name}.sha256"));
+        success(&run(
+            "sh",
+            &[
+                "scripts/smoke-archive.sh",
+                version,
+                &target,
+                text(&destination),
+            ],
+            &root(),
+        ));
         let listing = run("tar", &["-tzf", text(&archive)], temp.path());
         success(&listing);
         let mut names: Vec<_> = String::from_utf8(listing.stdout)
             .expect("tar listing")
             .lines()
+            .filter(|name| !name.ends_with('/'))
             .map(str::to_owned)
             .collect();
         names.sort();
-        assert_eq!(names, ["LICENSE", "README.md", "assets/repot.png", "repot"]);
+        let expected = packaged_files();
+        assert_eq!(names, expected);
         let unpacked = temp.path().join("unpacked");
         fs::create_dir(&unpacked).expect("unpack directory");
         success(&run(
@@ -126,7 +171,7 @@ mod tests {
             &["-xzf", text(&archive), "-C", text(&unpacked)],
             temp.path(),
         ));
-        for name in ["README.md", "LICENSE", "assets/repot.png"] {
+        for name in expected.iter().filter(|name| *name != "repot") {
             assert_eq!(
                 fs::read(unpacked.join(name)).expect("packaged documentation"),
                 fs::read(root().join(name)).expect("source documentation")

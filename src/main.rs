@@ -8,6 +8,7 @@ mod ghq_listing;
 mod git_read;
 mod lifecycle;
 mod manifest;
+mod manifest_format;
 mod navigation;
 mod process;
 mod publish;
@@ -37,7 +38,7 @@ pub(crate) type Result<T> = std::result::Result<T, String>;
 struct Cli {
     #[arg(short = 'v', long = "version", visible_short_alias = 'V', global = true, action = clap::ArgAction::Version)]
     _version: Option<bool>,
-    /// Manifest location (default: `$XDG_CONFIG_HOME/repot/repos.toml`).
+    /// Manifest location (.kdl selects KDL; otherwise TOML). Auto-detects repos.toml or repos.kdl.
     #[arg(long, global = true)]
     manifest: Option<PathBuf>,
     #[command(subcommand)]

@@ -15,6 +15,7 @@ type RepotCi {
     "!tests",
     "!examples",
     "!assets",
+    "!docs",
     "!scripts",
     "!Formula",
     "!README.md",

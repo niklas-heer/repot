@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
 
 use crate::config::{Config, Manifest, RepoEntry, remote_parts};
 use crate::{Result, discovery, lifecycle, navigation, process};
@@ -251,7 +250,7 @@ fn read_manifest(config: &Config, target: &Path) -> Result<(Config, String)> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(error) => return Err(format!("read manifest: {error}")),
     };
-    let manifest: Manifest = toml::from_str(&text)
+    let manifest: Manifest = crate::manifest_format::parse(&config.manifest_path, &text)
         .map_err(|_| "manifest is invalid; no changes were made".to_owned())?;
     for entry in &manifest.repo {
         validate_entry(entry)?;
@@ -280,9 +279,6 @@ fn edit_manifest(
     destination: &Path,
     entry: &RepoEntry,
 ) -> Result<String> {
-    let mut document = original
-        .parse::<DocumentMut>()
-        .map_err(|_| "manifest formatting could not be parsed".to_owned())?;
     let mut matching = None;
     for (index, known) in config.manifest.repo.iter().enumerate() {
         let path = entry_path(config, known)?;
@@ -293,43 +289,7 @@ fn edit_manifest(
             );
         }
     }
-    if document.get("repo").is_none() {
-        document.insert("repo", Item::ArrayOfTables(ArrayOfTables::new()));
-    }
-    let repos = document
-        .get_mut("repo")
-        .and_then(Item::as_array_of_tables_mut)
-        .ok_or("manifest editing requires [[repo]] entries")?;
-    if let Some(index) = matching {
-        let table = repos.get_mut(index).ok_or("manifest entry changed")?;
-        set_preserving_comment(table, "url", value(&entry.url));
-        if let Some(path) = &entry.path {
-            set_preserving_comment(table, "path", value(path));
-        } else {
-            table.remove("path");
-        }
-        if !entry.restore {
-            set_preserving_comment(table, "restore", value(false));
-        }
-    } else {
-        let mut table = Table::new();
-        table.insert("url", value(&entry.url));
-        if let Some(path) = &entry.path {
-            table.insert("path", value(path));
-        }
-        table.insert("restore", value(entry.restore));
-        repos.push(table);
-    }
-    Ok(document.to_string())
-}
-
-fn set_preserving_comment(table: &mut Table, key: &str, mut replacement: Item) {
-    if let Some(previous) = table.get(key).and_then(Item::as_value)
-        && let Some(value) = replacement.as_value_mut()
-    {
-        *value.decor_mut() = previous.decor().clone();
-    }
-    table.insert(key, replacement);
+    crate::manifest_format::edit(&config.manifest_path, original, matching, entry)
 }
 
 fn stage_manifest(path: &Path, text: &str) -> Result<tempfile::NamedTempFile> {

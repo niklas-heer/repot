@@ -28,6 +28,7 @@ cat > "$assets/repot.rb" <<EOF
 class Repot < Formula
   desc "Keep Git repositories organised, current and portable"
   homepage "https://github.com/niklas-heer/repot"
+  head "https://github.com/niklas-heer/repot.git", branch: "main"
   version "$version"
   license "MIT"
 
@@ -53,13 +54,19 @@ class Repot < Formula
   end
 
   depends_on "git"
+  depends_on "rust" => :build if build.head?
 
   def install
-    bin.install "repot"
+    if build.head?
+      system "cargo", "install", *std_cargo_args
+    else
+      bin.install "repot"
+    end
   end
 
   test do
-    assert_match "repot #{version}", shell_output("#{bin}/repot --version")
+    expected = build.head? ? "repot " : "repot #{version}"
+    assert_match expected, shell_output("#{bin}/repot --version")
     ENV["HOME"] = testpath
     ENV["GHQ_ROOT"] = testpath/"repos"
     ENV["XDG_CONFIG_HOME"] = testpath/"config"

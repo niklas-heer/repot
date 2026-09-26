@@ -62,6 +62,7 @@ jobs:
             exit 1
           fi
           mise exec -- sh scripts/package.sh "$version" "$RELEASE_TARGET"
+          sh scripts/smoke-archive.sh "$version" "$RELEASE_TARGET" dist
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: repot-${{ matrix.target }}
@@ -83,6 +84,7 @@ jobs:
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
           sh scripts/release-formula.sh "$version" dist
+          cp "docs/releases/v$version.md" dist/RELEASE_NOTES.md
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: repot-release-bundle
@@ -90,11 +92,28 @@ jobs:
             dist/*.tar.gz
             dist/SHA256SUMS
             dist/repot.rb
+            dist/RELEASE_NOTES.md
           if-no-files-found: error
+
+  homebrew:
+    name: Install generated Homebrew formula
+    needs: assemble
+    runs-on: macos-14
+    timeout-minutes: 15
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: repot-release-bundle
+          path: dist
+      - run: sh scripts/smoke-homebrew.sh dist
 
   publish:
     if: github.ref_type == 'tag' && github.event_name == 'push'
-    needs: assemble
+    needs: [assemble, homebrew]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -108,4 +127,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes dist/*.tar.gz dist/SHA256SUMS dist/repot.rb
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "repot $GITHUB_REF_NAME" --notes-file dist/RELEASE_NOTES.md dist/*.tar.gz dist/SHA256SUMS dist/repot.rb

@@ -35,8 +35,9 @@ cp "$binary" "$stage/repot"
 cp LICENSE README.md "$stage/"
 mkdir "$stage/assets"
 cp assets/repot.png "$stage/assets/"
+cp -R docs "$stage/docs"
 archive="repot-$version-$target.tar.gz"
-tar -czf "$destination/$archive" -C "$stage" repot LICENSE README.md assets/repot.png
+tar -czf "$destination/$archive" -C "$stage" repot LICENSE README.md assets/repot.png docs
 (
   cd "$destination"
   if command -v sha256sum >/dev/null 2>&1; then
