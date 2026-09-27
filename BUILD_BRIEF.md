@@ -1,6 +1,6 @@
 # repot build brief
 
-Created 2026-09-26. This document records what repot should become, the rules it must keep, and the order of work. Status: all six original implementation milestones are complete. [v0.1.0](https://github.com/niklas-heer/repot/releases/tag/v0.1.0) is published with TOML, KDL and YAML manifests, the bundled agent guide and MCP server, and developer-focused documentation. Native Linux/macOS archives, Nix builds and the generated Homebrew formula passed the release gates. After the release, the terminal experience was redesigned (inline picker, grouped status, newcomer-friendly command names) and the Homebrew formula moved to the shared [niklas-heer/tap](https://github.com/niklas-heer/homebrew-tap).
+Created 2026-09-26. This document records what repot should become, the rules it must keep, and the order of work. Status: all six original implementation milestones are complete. [v0.1.0](https://github.com/niklas-heer/repot/releases/tag/v0.1.0) is published with TOML, KDL and YAML manifests, the bundled agent guide and MCP server, and developer-focused documentation. Native Linux/macOS archives, Nix builds and the generated Homebrew formula passed the release gates. [v0.2.0](https://github.com/niklas-heer/repot/releases/tag/v0.2.0) redesigns the terminal experience (inline picker, grouped status, newcomer-friendly command names) and moves the Homebrew formula to the shared [niklas-heer/tap](https://github.com/niklas-heer/homebrew-tap).
 
 ## Intent
 

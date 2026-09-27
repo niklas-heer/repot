@@ -127,7 +127,7 @@ fn request_metadata(input: &str, import_path: &str, timeout: Duration) -> Result
         .into();
     let mut response = agent
         .get(format!("{input}?go-get=1"))
-        .header("User-Agent", "repot/0.1.0")
+        .header("User-Agent", concat!("repot/", env!("CARGO_PKG_VERSION")))
         .call()
         .map_err(|_| "vanity metadata request failed")?;
     if !response.status().is_success() {
