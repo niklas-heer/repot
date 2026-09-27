@@ -129,48 +129,55 @@ pub fn run(program: &str, args: &[&OsStr], path: &Path, timeout: Duration) -> Re
         let _ = sender.send(result);
     });
     let started = Instant::now();
-    let mut status = None;
-    let mut output = None;
-    loop {
+    // Block on the output instead of polling: the child closing stdout is the
+    // common completion signal. Waking at least every 50 ms keeps signal
+    // cancellation and the timeout responsive.
+    let text = loop {
         if cancellation_requested() {
             terminate(&mut child);
             return Err("operation cancelled".into());
         }
-        if status.is_none() {
-            match child.try_wait() {
-                Ok(value) => status = value,
-                Err(error) => {
-                    terminate(&mut child);
-                    return Err(error.to_string());
-                }
+        let remaining = timeout.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            terminate(&mut child);
+            return Err(format!("{program} timed out"));
+        }
+        match receiver.recv_timeout(remaining.min(Duration::from_millis(50))) {
+            Ok(text) => break text,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                terminate(&mut child);
+                return Err(format!("cannot read {program} output"));
             }
         }
-        if output.is_none() {
-            match receiver.try_recv() {
-                Ok(value) => output = Some(value),
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    terminate(&mut child);
-                    return Err(format!("cannot read {program} output"));
-                }
-                Err(mpsc::TryRecvError::Empty) => {}
+    };
+    // The child normally exits right after closing stdout; a process that
+    // keeps running is still bounded by the same timeout and cancellation.
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(error) => {
+                terminate(&mut child);
+                return Err(error.to_string());
             }
         }
-        if let (Some(status), Some(text)) = (status, output.as_ref()) {
-            return text
-                .as_ref()
-                .map(|text| Output {
-                    success: status.success(),
-                    code: status.code(),
-                    stdout: text.clone(),
-                })
-                .map_err(|_| format!("{program} returned unreadable output"));
+        if cancellation_requested() {
+            terminate(&mut child);
+            return Err("operation cancelled".into());
         }
         if started.elapsed() >= timeout {
             terminate(&mut child);
             return Err(format!("{program} timed out"));
         }
-        std::thread::sleep(Duration::from_millis(5));
-    }
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    text.map(|text| Output {
+        success: status.success(),
+        code: status.code(),
+        stdout: text,
+    })
+    .map_err(|_| format!("{program} returned unreadable output"))
 }
 
 pub fn git(path: &Path, args: &[&str]) -> Result<String> {
