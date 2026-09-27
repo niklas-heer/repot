@@ -46,10 +46,10 @@ moves the installation over automatically.
 ### Nix
 
 ```sh
-nix profile install github:niklas-heer/repot/v0.2.0
+nix profile install github:niklas-heer/repot/v0.3.0
 ```
 
-Prefer a binary or a source build? See the [release downloads](https://github.com/niklas-heer/repot/releases/tag/v0.2.0)
+Prefer a binary or a source build? See the [release downloads](https://github.com/niklas-heer/repot/releases/tag/v0.3.0)
 and [installation guide](docs/install.md) for platform selection, checksums and Cargo instructions.
 
 ### Enable directory switching

@@ -39,8 +39,8 @@ The locked flake builds from source with the pinned Rust toolchain and supplies
 Git at runtime.
 
 ```sh
-nix profile install github:niklas-heer/repot/v0.2.0
-nix run github:niklas-heer/repot/v0.2.0 -- --help
+nix profile install github:niklas-heer/repot/v0.3.0
+nix run github:niklas-heer/repot/v0.3.0 -- --help
 ```
 
 From a checkout, use `nix build .` or `nix run . -- --help`.
@@ -48,7 +48,7 @@ From a checkout, use `nix build .` or `nix run . -- --help`.
 ## Prebuilt archives
 
 Download your platform's archive and `SHA256SUMS` from the
-[v0.2.0 release](https://github.com/niklas-heer/repot/releases/tag/v0.2.0).
+[v0.3.0 release](https://github.com/niklas-heer/repot/releases/tag/v0.3.0).
 
 | Platform | Archive target |
 | --- | --- |
@@ -57,12 +57,12 @@ Download your platform's archive and `SHA256SUMS` from the
 | Linux ARM64 | `aarch64-unknown-linux-gnu` |
 | Linux Intel/AMD | `x86_64-unknown-linux-gnu` |
 
-Archives are named `repot-0.2.0-TARGET.tar.gz`. Linux archives target glibc.
+Archives are named `repot-0.3.0-TARGET.tar.gz`. Linux archives target glibc.
 Verify before extracting. For example, on an Apple Silicon Mac:
 
 ```sh
-grep '  repot-0.2.0-aarch64-apple-darwin.tar.gz$' SHA256SUMS | shasum -a 256 -c -
-tar -xzf repot-0.2.0-aarch64-apple-darwin.tar.gz
+grep '  repot-0.3.0-aarch64-apple-darwin.tar.gz$' SHA256SUMS | shasum -a 256 -c -
+tar -xzf repot-0.3.0-aarch64-apple-darwin.tar.gz
 mkdir -p ~/.local/bin
 install -m 755 repot ~/.local/bin/repot
 ```
