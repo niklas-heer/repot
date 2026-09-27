@@ -32,6 +32,7 @@ files. Use this only when network access and fetching are within the task's scop
 | Locate a checkout | `list --json` | Returns absolute paths; use your process working directory instead of the interactive picker. |
 | Inspect cached state | `status --no-fetch --json` | No fetch; observations may be stale. |
 | Find drift | `doctor --json` | Report only: duplicates, GitHub renames/archives via `gh`, misplaced checkouts, each with a `fix` command; `--offline` skips GitHub. Exit 3 means findings. |
+| Find forgotten checkouts | `stale --days N --json` | Oldest first, with `last_touched` (Unix time) and `local_work`; informational, exit 0. |
 | Describe one checkout | `info NAME --json` | Local only: branch, cached ahead/behind, change counts, remote without credentials, recent commits. |
 | Preview safe updates | `sync --dry-run --json` | Uses cached refs; never fetches or applies a plan. |
 | Apply safe updates | `sync --json` | Fetches, revalidates and applies eligible updates across configured checkouts. |

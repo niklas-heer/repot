@@ -18,6 +18,7 @@
 | `repot restore` | Clone missing entries from your manifest on a new machine |
 | `repot rm` / `repot trash` | Archive a checkout without losing work; list or restore archives |
 | `repot doctor` | Find duplicates, renamed or archived GitHub repositories and misplaced checkouts |
+| `repot stale [--days N]` | Repositories you have not visited or worked in for N days (default 90) |
 | `repot shell-init <shell>` | Print shell integration so `repot cd` can change directory |
 | `repot completions <shell>` | Generate bash, zsh, fish or Nushell completions |
 | `repot agent-guide` / `repot mcp` | Guide and stdio MCP server for coding agents |
@@ -68,8 +69,10 @@ signals decide the order:
   more than old ones: a visit in the last hour counts 16, today 8, this week 4,
   this month 2, and anything older 1. A daily habit therefore beats a single
   visit, while the repository you just left stays near the top.
-- **Git activity.** Repositories you have not visited yet are ordered by their
-  latest local Git activity (commits, checkouts, merges and staging).
+- **Git activity.** Repositories you have not visited yet are ordered by your
+  latest own Git activity: the newest HEAD reflog entry (commit, checkout, merge,
+  reset, pull). repot labels its own Git operations, so fast-forwards from
+  `repot sync` never count as you touching a repository.
 
 While you type, fuzzy matching decides and frecency breaks close calls; it never
 adds a repository that does not match.
@@ -274,6 +277,15 @@ Before suggesting removal, doctor lists work that exists only in the stale copy:
 changed files, stashes, unpushed commits and linked worktrees. `repot rm`
 archives the entire checkout, so `repot trash restore` can bring it back. Doctor
 exits 3 when it has findings and 0 when everything is where it belongs.
+
+## Stale repositories
+
+`repot stale` lists repositories you have neither visited nor worked in for 90
+days (`--days N` changes that), oldest first, as candidates to archive with
+`repot rm`. Each row shows when you last touched it and any work that exists only
+there: changed files, stashes, unpushed commits or linked worktrees. At most once
+a week, `repot status` ends with a one-line reminder when there are stale
+repositories.
 
 ## Scan, adopt and restore
 

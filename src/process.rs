@@ -88,6 +88,9 @@ fn command(program: &str, args: &[&OsStr], path: &Path) -> Command {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .env("GIT_TERMINAL_PROMPT", "0")
+        // Reflog entries from repot's own clones, switches and fast-forwards
+        // read "repot", so they never count as the user's activity.
+        .env("GIT_REFLOG_ACTION", "repot")
         .env("GCM_INTERACTIVE", "never")
         .env("LC_ALL", "C")
         .env("GIT_OPTIONAL_LOCKS", "0")

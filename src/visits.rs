@@ -216,10 +216,12 @@ fn aggregate(content: &[u8], now: u64) -> HashMap<PathBuf, Visits> {
     visits
 }
 
-/// When Git last recorded activity in a checkout: commits, checkouts, merges
-/// and staging all touch the index or the HEAD reflog. Only file metadata is
-/// read, so this stays cheap for hundreds of repositories.
-pub fn activity(path: &Path) -> Option<SystemTime> {
+/// When you last did something in a checkout with Git: the newest HEAD reflog
+/// entry (commit, checkout, merge, reset, pull) that repot did not write itself.
+/// repot labels its own entries through `GIT_REFLOG_ACTION`, so fast-forwards
+/// from `repot sync` never make a checkout look recently used. Only the tail
+/// of one file is read, so this stays cheap for hundreds of repositories.
+pub fn activity(path: &Path) -> Option<u64> {
     let dot_git = path.join(".git");
     let git_dir = if dot_git.is_file() {
         let pointer = fs::read_to_string(&dot_git).ok()?;
@@ -232,14 +234,32 @@ pub fn activity(path: &Path) -> Option<SystemTime> {
     } else {
         dot_git
     };
-    ["index", "logs/HEAD", "HEAD"]
-        .iter()
-        .filter_map(|name| {
-            fs::metadata(git_dir.join(name))
-                .and_then(|m| m.modified())
-                .ok()
-        })
-        .max()
+    let mut file = fs::File::open(git_dir.join("logs/HEAD")).ok()?;
+    let length = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(length.saturating_sub(64 * 1024)))
+        .ok()?;
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail).ok()?;
+    last_own_entry(&tail)
+}
+
+/// The timestamp of the newest reflog line whose message is not repot's.
+fn last_own_entry(reflog: &[u8]) -> Option<u64> {
+    reflog.split(|byte| *byte == b'\n').rev().find_map(|line| {
+        let tab = line.iter().position(|byte| *byte == b'\t')?;
+        let (identity, message) = line.split_at(tab);
+        if message
+            .get(1..)
+            .is_some_and(|message| message.starts_with(b"repot"))
+        {
+            return None;
+        }
+        // `<old> <new> <name> <<email>> <seconds> <zone>`
+        let identity = std::str::from_utf8(identity).ok()?;
+        let mut fields = identity.rsplitn(3, ' ');
+        let _zone = fields.next()?;
+        fields.next()?.parse().ok()
+    })
 }
 
 /// "5 min ago"-style age for people, from a Unix timestamp.
@@ -259,6 +279,20 @@ pub fn ago(timestamp: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn activity_ignores_reflog_entries_written_by_repot() {
+        let zero = "0".repeat(40);
+        let log = format!(
+            "{zero} {zero} A <a@b> 100 +0200\tcommit (initial): one\n\
+             {zero} {zero} A <a@b> 200 +0200\tcheckout: moving from main to dev\n\
+             {zero} {zero} A <a@b> 300 +0200\trepot: Fast-forward\n\
+             {zero} {zero} A <a@b> 400 -0500\trepot\n"
+        );
+        assert_eq!(last_own_entry(log.as_bytes()), Some(200));
+        assert_eq!(last_own_entry(b""), None);
+        assert_eq!(last_own_entry(b"garbage without tab\n"), None);
+    }
 
     #[test]
     fn paths_with_separators_round_trip_through_the_log_format() {

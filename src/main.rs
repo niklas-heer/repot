@@ -19,6 +19,7 @@ mod publish;
 mod remote_extra;
 mod remote_spec;
 mod repository_ops;
+mod stale;
 mod status;
 mod sync;
 mod ui;
@@ -165,6 +166,8 @@ enum Commands {
     /// Find duplicates, renamed or archived GitHub repositories, and misplaced
     /// checkouts, with the command that fixes each. Changes nothing.
     Doctor(doctor::Options),
+    /// List repositories you have not visited or worked in for a long time.
+    Stale(stale::Options),
     /// List or restore checkouts archived by `repot rm`.
     Trash {
         #[command(subcommand)]
@@ -340,6 +343,7 @@ fn run(cli: Cli) -> Result<u8> {
         Commands::Rm(options) => return repository_ops::remove(&config, &options),
         Commands::Trash { command } => return repository_ops::trash(&config, &command),
         Commands::Doctor(options) => return doctor::run(&config, &options),
+        Commands::Stale(options) => return stale::run(&config, &options),
         Commands::Create(options) => return get::create(&config, &options),
         Commands::Migrate(options) => return repository_ops::migrate(&config, &options),
         Commands::Mcp

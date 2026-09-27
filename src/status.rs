@@ -107,7 +107,7 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
         });
         collect(config, options, progress.as_ref(), None)?
     };
-    render(
+    let code = render(
         &reports,
         options.json,
         &View {
@@ -119,7 +119,14 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
             },
             elapsed: started.elapsed(),
         },
-    )
+    )?;
+    if !options.json
+        && std::io::stdout().is_terminal()
+        && let Some(hint) = crate::stale::weekly_hint(config)
+    {
+        print!("{hint}");
+    }
+    Ok(code)
 }
 
 /// Runs after each inspection on the same worker, so updates overlap with the

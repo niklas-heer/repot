@@ -123,7 +123,7 @@ fn quoted(path: &Path) -> String {
 }
 
 /// Uncommitted files, stashes and commits that no remote has.
-fn local_work(path: &Path) -> Option<String> {
+pub fn local_work(path: &Path) -> Option<String> {
     let count = |args: &[&str]| {
         process::git_optional(path, args)
             .ok()

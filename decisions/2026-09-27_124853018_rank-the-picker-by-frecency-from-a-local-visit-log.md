@@ -48,3 +48,12 @@ can be lost, which only nudges ranking. Git activity also changes when repot
 itself fast-forwards a checkout, so recently synced checkouts can rise among
 unvisited ones. The file holds local paths only and never leaves the machine.
 Revisit the storage if ranking needs richer queries than per-path aggregates.
+
+## Update 2026-09-27
+
+Git activity now means the newest HEAD reflog entry not written by repot. Every
+Git subprocess runs with `GIT_REFLOG_ACTION=repot`, so switches and fast-forwards
+from `repot sync` read `repot…` in the reflog and are skipped, which removes the
+sync noise noted above. `repot stale` uses the same measure together with the
+last visit. Clones keep Git's own `clone:` entry; cloning counts as touching.
+

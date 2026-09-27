@@ -57,6 +57,7 @@ aliases (`jump`, `get`, `find`) or hidden commands (`create`, `migrate`).
 | `repot restore [--dry-run]` | Clone everything listed in the manifest that is missing |
 | `repot rm` / `repot trash` | Remove from active tree into a recoverable archive; restore explicitly |
 | `repot doctor` | Report duplicates, GitHub renames/archives and misplaced checkouts with fixes |
+| `repot stale` | Repositories untouched for a long time, as archive candidates |
 | `repot shell-init <nu\|zsh\|bash\|fish>` | Print the shell integration |
 | `repot completions <nu\|zsh\|bash\|fish>` | Generate shell completions |
 | `repot agent-guide` | Print bundled automation guidance, examples and safety rules |

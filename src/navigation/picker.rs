@@ -43,8 +43,8 @@ struct Entry {
     path_text: Utf32String,
     /// Ranking boost from frecency: how often and how recently you went there.
     boost: u32,
-    /// Latest Git activity, which orders checkouts you have not visited yet.
-    activity: Option<std::time::SystemTime>,
+    /// Your latest Git activity, which orders checkouts you have not visited yet.
+    activity: Option<u64>,
 }
 
 use crate::ui::visible;

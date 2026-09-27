@@ -81,6 +81,7 @@ const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "doctor",
                 "Find duplicates, renamed repositories and misplaced checkouts",
             ),
+            ("stale", "List repositories you have not touched in months"),
         ],
     ),
     (
