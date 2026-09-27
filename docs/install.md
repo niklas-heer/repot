@@ -15,18 +15,23 @@ only if region selection falls back to `aws configure get region`.
 ## Homebrew
 
 ```sh
-brew tap niklas-heer/repot https://github.com/niklas-heer/repot
-brew install niklas-heer/repot/repot
+brew install niklas-heer/tap/repot
 ```
 
 To build the current development source instead:
 
 ```sh
-brew install --HEAD niklas-heer/repot/repot
+brew install --HEAD niklas-heer/tap/repot
 ```
 
-The stable formula uses release archives and their actual SHA-256 hashes.
-Homebrew also supplies Git.
+The formula lives in [niklas-heer/homebrew-tap](https://github.com/niklas-heer/homebrew-tap).
+It uses the release archives and the SHA-256 hashes published with each release,
+and the tap installs and tests every new version on all four platforms before it
+is offered. Homebrew also supplies Git.
+
+If you tapped the former `niklas-heer/repot` location, `brew update` migrates the
+installation to the shared tap; afterwards `brew untap niklas-heer/repot` removes
+the old tap.
 
 ## Nix
 
@@ -65,8 +70,7 @@ install -m 755 repot ~/.local/bin/repot
 On Linux, select your archive’s line from `SHA256SUMS` and pipe it to `sha256sum -c -`. Ensure
 `~/.local/bin` is on your `PATH`. Archives include the README, license, icon and
 user documentation, including TOML, KDL and YAML configuration examples and an
-agent integration guide. The release also contains aggregate `SHA256SUMS` and a
-`repot.rb` Homebrew formula.
+agent integration guide. The release also contains aggregate `SHA256SUMS`.
 
 ## Build from source
 

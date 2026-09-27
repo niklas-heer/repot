@@ -36,9 +36,12 @@ Homebrew and Nix supply it. Install [`gh`](https://cli.github.com/) or
 ### Homebrew
 
 ```sh
-brew tap niklas-heer/repot https://github.com/niklas-heer/repot
-brew install niklas-heer/repot/repot
+brew install niklas-heer/tap/repot
 ```
+
+The formula lives in [niklas-heer/homebrew-tap](https://github.com/niklas-heer/homebrew-tap)
+alongside the other tools. Tapped the old `niklas-heer/repot` location? `brew update`
+moves the installation over automatically.
 
 ### Nix
 

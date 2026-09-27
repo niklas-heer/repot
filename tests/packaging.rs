@@ -267,7 +267,7 @@ mod tests {
         fs::write(stage.join("LICENSE"), "fixture license\n").expect("license fixture");
         fs::write(stage.join("README.md"), "fixture documentation\n").expect("README fixture");
         for target in TARGETS {
-            // Distinct valid archives expose a formula that swaps architecture digests.
+            // Distinct valid archives expose checksums that swap architecture digests.
             fs::write(
                 stage.join("repot"),
                 format!("fixture executable for {target}\n"),
@@ -294,44 +294,29 @@ mod tests {
     }
 
     #[test]
-    fn generated_formula_binds_each_release_url_to_its_actual_archive_digest() {
-        let temp = tempfile::tempdir().expect("formula fixture");
+    fn release_checksums_cover_exactly_the_actual_archives() {
+        let temp = tempfile::tempdir().expect("checksum fixture");
         let version = env!("CARGO_PKG_VERSION");
         let expected = fixture_archives(temp.path(), version);
+        fs::write(temp.path().join("unrelated.txt"), "not a release asset").expect("stray file");
         let output = run(
             "sh",
-            &["scripts/release-formula.sh", version, text(temp.path())],
+            &["scripts/release-checksums.sh", version, text(temp.path())],
             &root(),
         );
         success(&output);
-        let formula = fs::read_to_string(temp.path().join("repot.rb")).expect("generated formula");
-        let mut seen = BTreeMap::new();
-        let mut pending_url = None;
-        for line in formula.lines().map(str::trim) {
-            if let Some(url) = line
-                .strip_prefix("url \"")
-                .and_then(|line| line.strip_suffix('"'))
-            {
-                assert!(url.starts_with(&format!(
-                    "https://github.com/niklas-heer/repot/releases/download/v{version}/"
-                )));
-                pending_url = Some(url.rsplit('/').next().expect("asset filename").to_owned());
-            } else if let Some(checksum) = line
-                .strip_prefix("sha256 \"")
-                .and_then(|line| line.strip_suffix('"'))
-            {
-                let name = pending_url.take().expect("checksum has a release URL");
-                assert!(
-                    seen.insert(name, checksum.to_owned()).is_none(),
-                    "duplicate formula asset"
-                );
-            }
-        }
-        assert_eq!(seen, expected);
         verify_checksums(temp.path(), "SHA256SUMS");
         let sums = fs::read_to_string(temp.path().join("SHA256SUMS")).expect("release checksums");
-        assert_eq!(sums.lines().count(), 5);
-        assert!(sums.lines().any(|line| line.ends_with("repot.rb")));
+        let listed: BTreeMap<String, String> = sums
+            .lines()
+            .map(|line| {
+                let (checksum, name) = line.split_once("  ").expect("checksum line");
+                (name.to_owned(), checksum.to_owned())
+            })
+            .collect();
+        // The Homebrew tap binds each platform URL to exactly these digests.
+        assert_eq!(listed, expected);
+        assert!(!temp.path().join("repot.rb").exists());
         // Checksum validation must actually detect corruption of a packaged asset.
         let first = expected.keys().next().expect("asset");
         fs::write(temp.path().join(first), "corrupted archive").expect("inject corrupt asset");
@@ -346,8 +331,8 @@ mod tests {
     }
 
     #[test]
-    fn formula_generation_refuses_incomplete_assets_and_invalid_release_versions() {
-        let temp = tempfile::tempdir().expect("formula fixture");
+    fn checksum_generation_refuses_incomplete_assets_and_invalid_release_versions() {
+        let temp = tempfile::tempdir().expect("checksum fixture");
         let version = env!("CARGO_PKG_VERSION");
         fixture_archives(temp.path(), version);
         fs::remove_file(
@@ -357,11 +342,10 @@ mod tests {
         .expect("remove one required target");
         let output = run(
             "sh",
-            &["scripts/release-formula.sh", version, text(temp.path())],
+            &["scripts/release-checksums.sh", version, text(temp.path())],
             &root(),
         );
         assert!(!output.status.success());
-        assert!(!temp.path().join("repot.rb").exists());
         assert!(!temp.path().join("SHA256SUMS").exists());
         for version in [
             "../escape",
@@ -373,7 +357,7 @@ mod tests {
         ] {
             let output = run(
                 "sh",
-                &["scripts/release-formula.sh", version, text(temp.path())],
+                &["scripts/release-checksums.sh", version, text(temp.path())],
                 &root(),
             );
             assert!(
@@ -385,6 +369,6 @@ mod tests {
                 "invalid version must fail validation before looking for assets"
             );
         }
-        assert!(!temp.path().join("repot.rb").exists());
+        assert!(!temp.path().join("SHA256SUMS").exists());
     }
 }

@@ -56,14 +56,20 @@ Keep the Cargo package version and lockfile aligned, write
 `docs/releases/vX.Y.Z.md`, and commit the checked changes. Run the **Release**
 workflow manually on that commit before creating a tag. Manual runs build and
 test all four native targets, verify extracted archives with all three manifest
-formats, run the Nix source checks, and install/test the generated Homebrew
-formula on a disposable runner. They upload artifacts without publishing.
+formats, and run the Nix source checks. They upload artifacts without publishing.
 
 After the rehearsal passes, push the matching annotated `vX.Y.Z` tag. The
-tag workflow repeats the gates and publishes the archives, `SHA256SUMS` and
-generated `repot.rb` with the checked-in release notes. Copy that generated
-formula into `Formula/repot.rb` after publication and commit it so the tap
-installs the released version; the formula also retains `--HEAD` source builds.
+tag workflow repeats the gates and publishes the archives and `SHA256SUMS` with
+the checked-in release notes.
+
+Homebrew distribution lives in
+[niklas-heer/homebrew-tap](https://github.com/niklas-heer/homebrew-tap). Its
+**Update repot** workflow checks the latest published release hourly, generates
+the formula from `SHA256SUMS`, installs and tests it on macOS and Linux, ARM64
+and x86-64, and opens a pull request. Merge that pull request to publish the
+formula; run the workflow manually to skip the wait. This repository keeps only
+`tap_migrations.json`, which moves installations from the former
+`niklas-heer/repot` tap.
 
 ## Working with agents
 

@@ -1,6 +1,6 @@
 # repot build brief
 
-Created 2026-09-26. This document records what repot should become, the rules it must keep, and the order of work. Status: all six original implementation milestones are complete. [v0.1.0](https://github.com/niklas-heer/repot/releases/tag/v0.1.0) is published with TOML, KDL and YAML manifests, the bundled agent guide and MCP server, and developer-focused documentation. Native Linux/macOS archives, Nix builds and the generated Homebrew formula passed the release gates.
+Created 2026-09-26. This document records what repot should become, the rules it must keep, and the order of work. Status: all six original implementation milestones are complete. [v0.1.0](https://github.com/niklas-heer/repot/releases/tag/v0.1.0) is published with TOML, KDL and YAML manifests, the bundled agent guide and MCP server, and developer-focused documentation. Native Linux/macOS archives, Nix builds and the generated Homebrew formula passed the release gates. After the release, the terminal experience was redesigned (inline picker, grouped status, newcomer-friendly command names) and the Homebrew formula moved to the shared [niklas-heer/tap](https://github.com/niklas-heer/homebrew-tap).
 
 ## Intent
 
@@ -175,12 +175,13 @@ The delegated implementation resolved the original open questions:
   standalone checkouts; dependent layouts can be registered in place.
 - Manifest edits preserve comments and dotfiles symlinks. Restores stage clones and
   never replace an existing path. Dry-runs leave local files and refs untouched.
-- `get` stages clones before publishing their paths. `rm` archives rather than
+- `clone` stages clones before publishing their paths. `rm` archives rather than
   destroys work; `trash restore` refuses occupied destinations. This deliberately
   strengthens ghq's destructive removal behavior.
 - Release automation tests native Linux and macOS archives on ARM64 and x86-64,
-  generates Homebrew checksums from real assets, and builds from source through a
-  locked Nix flake using the same pinned Rust version.
+  publishes checksums of the real assets, and builds from source through a locked
+  Nix flake using the same pinned Rust version. The shared niklas-heer/tap derives
+  and verifies the Homebrew formula from those checksums.
 
 The reasoning and tradeoffs are recorded in [decisions/](decisions/).
 

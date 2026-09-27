@@ -18,7 +18,6 @@ type RepotCi {
     "!assets",
     "!docs",
     "!scripts",
-    "!Formula",
     "!README.md",
     "!LICENSE",
   ])

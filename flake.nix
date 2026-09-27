@@ -26,7 +26,7 @@
               root = ./.;
               fileset = pkgs.lib.fileset.unions [
                 ./Cargo.toml ./Cargo.lock ./rust-toolchain.toml ./clippy.toml
-                ./src ./vendor ./tests ./examples ./assets ./docs ./scripts ./Formula ./README.md ./LICENSE
+                ./src ./vendor ./tests ./examples ./assets ./docs ./scripts ./README.md ./LICENSE
               ];
             };
             cargoLock.lockFile = ./Cargo.lock;
