@@ -212,6 +212,89 @@ mod tests {
     }
 
     #[test]
+    fn templates_supply_committed_files_without_history_or_commits() {
+        let world = World::new();
+        let template = world.path("template");
+        world.git(
+            world.temp.path(),
+            &["init", "--quiet", "--initial-branch=main", "template"],
+        );
+        fs::create_dir_all(template.join("src")).expect("template tree");
+        fs::write(template.join("README.md"), "# starter\n").expect("readme");
+        fs::write(template.join("src/main.rs"), "fn main() {}\n").expect("source");
+        world.git(&template, &["add", "."]);
+        world.git(
+            &template,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.invalid",
+                "commit",
+                "--quiet",
+                "-m",
+                "starter",
+            ],
+        );
+        fs::write(template.join("uncommitted"), "not part of the template").expect("dirty");
+
+        assert_success(&world.repot(&[
+            "new",
+            "app",
+            "--template",
+            template.to_str().expect("path"),
+        ]));
+        let app = world.path("repository roots/local/scratch/app");
+        assert_eq!(
+            fs::read_to_string(app.join("README.md")).expect("readme"),
+            "# starter\n"
+        );
+        assert!(app.join("src/main.rs").exists());
+        assert!(
+            !app.join("uncommitted").exists(),
+            "only committed files are copied"
+        );
+        let head = world
+            .command("git")
+            .current_dir(&app)
+            .args(["rev-parse", "--verify", "--quiet", "HEAD"])
+            .output()
+            .expect("git");
+        assert!(!head.status.success(), "no commit is created");
+        assert!(
+            world
+                .git(&app, &["status", "--porcelain"])
+                .contains("?? README.md")
+        );
+
+        assert_success(&world.repot(&[
+            "new",
+            "example.test/team/service",
+            "--template",
+            template.to_str().expect("path"),
+        ]));
+        assert!(
+            world
+                .path("repository roots/example.test/team/service/src/main.rs")
+                .exists()
+        );
+
+        let before = world.snapshot();
+        let missing = world.repot(&[
+            "new",
+            "broken",
+            "--template",
+            world.path("nope").to_str().expect("path"),
+        ]);
+        assert!(!missing.status.success());
+        assert_eq!(
+            world.snapshot(),
+            before,
+            "a failed template leaves nothing behind"
+        );
+    }
+
+    #[test]
     fn new_uses_the_last_configured_ghq_root() {
         let world = World::new();
         world.git(

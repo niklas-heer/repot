@@ -89,6 +89,9 @@ pub struct CreateOptions {
     /// Show where the repository would go without creating it.
     #[arg(long)]
     pub dry_run: bool,
+    /// Start from the files of this repository or local checkout, without its history.
+    #[arg(long, value_name = "REPOSITORY")]
+    pub template: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -468,6 +471,14 @@ pub fn create(config: &Config, options: &CreateOptions) -> Result<u8> {
     }
     lifecycle::vacant(&spec.path)?;
     lifecycle::existing_parent(&spec.path)?;
+    if options.bare && options.template.is_some() {
+        return Err("a bare repository has no working tree for template files".into());
+    }
+    let template = options
+        .template
+        .as_deref()
+        .map(|input| lifecycle::Template::resolve(config, input))
+        .transpose()?;
     if options.dry_run {
         println!("would create {}", spec.path.display());
         return Ok(0);
@@ -483,6 +494,9 @@ pub fn create(config: &Config, options: &CreateOptions) -> Result<u8> {
         args.push("--bare");
     }
     process::git(stage.path(), &args)?;
+    if let Some(template) = &template {
+        template.fill(stage.path())?;
+    }
     lifecycle::rename_new(stage.path(), &spec.path)?;
     if std::env::var_os("REPOT_CD_FILE").is_some() {
         navigation::handoff(&spec.path)?;

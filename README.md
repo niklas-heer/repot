@@ -121,6 +121,7 @@ pushes or deletes your branches. [How safety checks work →](docs/guide.md#stat
 
 ```sh
 repot new experiment          # create locally, with no remote or commit
+repot new api --template owner/starter   # or start from a template's files
 # Work and commit as usual, then preview and publish:
 repot publish your-name/experiment --visibility public --dry-run
 repot publish your-name/experiment --visibility public

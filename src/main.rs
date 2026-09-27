@@ -120,6 +120,10 @@ enum Commands {
         /// Create a bare repository (owner/name targets only).
         #[arg(long)]
         bare: bool,
+        /// Start from the files of this repository or local checkout, without
+        /// its history; nothing is committed.
+        #[arg(long, value_name = "REPOSITORY")]
+        template: Option<String>,
         /// Show where the project would go without creating it.
         #[arg(long)]
         dry_run: bool,
@@ -316,8 +320,9 @@ fn run(cli: Cli) -> Result<u8> {
             name,
             namespace,
             bare,
+            template,
             dry_run,
-        } => return start(&config, name, &namespace, bare, dry_run),
+        } => return start(&config, name, &namespace, bare, dry_run, template),
         Commands::Publish(options) => return publish::run(&config, &options),
         Commands::Scan { path, json } => {
             let path = path
@@ -407,6 +412,7 @@ fn start(
     namespace: &str,
     bare: bool,
     dry_run: bool,
+    template: Option<String>,
 ) -> Result<u8> {
     if name.contains(['/', ':']) {
         return get::create(
@@ -416,6 +422,7 @@ fn start(
                 vcs: None,
                 bare,
                 dry_run,
+                template,
             },
         );
     }
@@ -425,7 +432,7 @@ fn start(
                 .into(),
         );
     }
-    lifecycle::new_project(config, &name, namespace, dry_run)?;
+    lifecycle::new_project(config, &name, namespace, dry_run, template.as_deref())?;
     Ok(0)
 }
 

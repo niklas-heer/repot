@@ -233,12 +233,19 @@ review or push needed. Failures take precedence over review in a mixed batch.
 repot new experiment                  # <primary-root>/local/scratch/experiment
 repot new experiment --namespace me --dry-run
 repot new owner/project               # empty repository at <root>/github.com/owner/project
+repot new api --template owner/starter # start from a template's files
 # Commit manually when ready, then preview and publish:
 repot publish owner/experiment --visibility public --dry-run
 repot publish owner/experiment --visibility public
 repot publish group/project --forge gitlab --visibility private
 # Use --host gitlab.example.com for a self-hosted forge.
 ```
+
+`--template` takes anything `repot clone` accepts, or a local checkout, and
+copies the template's committed files into the new project without its history.
+Nothing is committed: the files start out untracked, so the first commit is
+yours. Templates work for scratch projects and `owner/name` targets alike; if the
+template cannot be cloned, nothing is created.
 
 Publishing requires a clean committed branch, an authenticated `gh` or `glab`, an
 explicit target and visibility, and a free destination. It pushes only the inspected

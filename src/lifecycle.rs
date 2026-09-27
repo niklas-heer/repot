@@ -6,7 +6,90 @@ use std::path::{Path, PathBuf};
 use crate::config::Config;
 use crate::{Result, navigation, process};
 
-pub fn new_project(config: &Config, name: &str, namespace: &str, dry_run: bool) -> Result<()> {
+/// Where a new project's first files come from: a repository you could clone
+/// (owner/name, host/owner/name, URL) or a local checkout.
+pub struct Template {
+    source: String,
+    branch: Option<String>,
+}
+
+impl Template {
+    pub fn resolve(config: &Config, input: &str) -> Result<Self> {
+        let local = input
+            .strip_prefix("~/")
+            .and_then(|rest| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(rest)))
+            .unwrap_or_else(|| PathBuf::from(input));
+        if local.join(".git").exists() {
+            let path = local
+                .canonicalize()
+                .map_err(|error| format!("resolve template: {error}"))?;
+            return Ok(Self {
+                source: path.to_string_lossy().into_owned(),
+                branch: None,
+            });
+        }
+        let spec = crate::remote_spec::resolve(config, input, false, false)
+            .map_err(|error| format!("template: {error}"))?;
+        Ok(Self {
+            source: spec.url,
+            branch: spec.branch,
+        })
+    }
+
+    /// Copy the template's committed files into `checkout`, without its history
+    /// and without committing anything.
+    pub fn fill(&self, checkout: &Path) -> Result<()> {
+        let parent = checkout.parent().ok_or("destination has no parent")?;
+        let scratch = tempfile::Builder::new()
+            .prefix(".repot-template-")
+            .tempdir_in(parent)
+            .map_err(|error| format!("prepare template: {error}"))?;
+        let copy = scratch.path().join("template");
+        let mut args: Vec<std::ffi::OsString> = [
+            "clone",
+            "--quiet",
+            "--no-recurse-submodules",
+            "--depth",
+            "1",
+        ]
+        .into_iter()
+        .map(Into::into)
+        .collect();
+        if let Some(branch) = &self.branch {
+            args.extend(["--branch".into(), branch.into()]);
+        }
+        args.extend([
+            "--".into(),
+            self.source.clone().into(),
+            copy.clone().into_os_string(),
+        ]);
+        let args: Vec<&std::ffi::OsStr> = args.iter().map(std::ffi::OsString::as_os_str).collect();
+        let output = process::run("git", &args, parent, std::time::Duration::from_mins(2))?;
+        if !output.success {
+            return Err("cannot clone the template; check the name and your access".into());
+        }
+        for entry in fs::read_dir(&copy).map_err(|error| format!("read template: {error}"))? {
+            let entry = entry.map_err(|error| format!("read template: {error}"))?;
+            if entry.file_name() == ".git" {
+                continue;
+            }
+            fs::rename(entry.path(), checkout.join(entry.file_name()))
+                .map_err(|error| format!("copy template: {error}"))?;
+        }
+        Ok(())
+    }
+}
+
+pub fn new_project(
+    config: &Config,
+    name: &str,
+    namespace: &str,
+    dry_run: bool,
+    template: Option<&str>,
+) -> Result<()> {
+    let template = template
+        .map(|input| Template::resolve(config, input))
+        .transpose()?;
     validate_component(name)?;
     validate_component(namespace)?;
     let root = config.roots.last().ok_or("no repository root configured")?;
@@ -16,7 +99,14 @@ pub fn new_project(config: &Config, name: &str, namespace: &str, dry_run: bool) 
     let parent = target.parent().ok_or("destination has no parent")?;
     existing_parent(&target)?;
     if dry_run {
-        println!("would create scratch repository at {}", target.display());
+        println!(
+            "would create scratch repository at {}{}",
+            target.display(),
+            template
+                .as_ref()
+                .map(|template| format!(" from template {}", template.source))
+                .unwrap_or_default()
+        );
         return Ok(());
     }
     fs::create_dir_all(parent).map_err(|error| format!("create scratch parent: {error}"))?;
@@ -28,6 +118,9 @@ pub fn new_project(config: &Config, name: &str, namespace: &str, dry_run: bool) 
         staging.path(),
         &["init", "--template=", "--initial-branch=main"],
     )?;
+    if let Some(template) = &template {
+        template.fill(staging.path())?;
+    }
     rename_new(staging.path(), &target)?;
     crate::ui::done(&format!("created scratch project {}", target.display()));
     navigation::handoff(&target.canonicalize().map_err(|error| error.to_string())?)
