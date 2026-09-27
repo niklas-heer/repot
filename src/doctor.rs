@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fmt::Write as _;
+use std::io::{IsTerminal as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -17,6 +18,10 @@ use crate::work::parallel;
 use crate::{Result, process, ui};
 
 #[derive(Debug, clap::Args)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent command-line flags of one command"
+)]
 pub struct Options {
     /// Print machine-readable results.
     #[arg(long)]
@@ -30,6 +35,13 @@ pub struct Options {
     /// Timeout for each Git or gh call, in seconds.
     #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..=3600))]
     pub timeout: u64,
+    /// Apply the suggested fixes, asking before each one.
+    #[arg(long)]
+    pub fix: bool,
+    /// With --fix, apply without asking; findings with work that exists only in
+    /// that checkout are skipped.
+    #[arg(long, short = 'y', requires = "fix")]
+    pub yes: bool,
 }
 
 /// What GitHub says about a remote.
@@ -65,11 +77,25 @@ pub struct Finding {
     pub fix: String,
     /// Work that exists only in this checkout, worth a look before removing it.
     pub local_work: Option<String>,
+    #[serde(skip)]
+    action: Action,
+}
+
+/// What `--fix` does for a finding: the same thing as its `fix` command.
+#[derive(Debug, Clone)]
+enum Action {
+    /// Archive with `repot rm`.
+    Archive,
+    /// Optionally point a remote at a new URL, then move with `repot adopt`.
+    Relocate { remote: Option<(String, String)> },
+    /// Nothing to apply automatically.
+    Review,
 }
 
 /// What one checkout claims to be, from its remote.
 struct Identity {
     path: PathBuf,
+    remote: String,
     url: String,
     host: String,
     parts: Vec<String>,
@@ -97,6 +123,7 @@ fn identify(path: &Path) -> Option<Identity> {
     let (host, parts) = remote_parts(&url).ok()?;
     Some(Identity {
         path: path.to_path_buf(),
+        remote: remote.to_owned(),
         url,
         host,
         parts,
@@ -259,7 +286,90 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
     drop(progress);
     let findings = findings(config, &identities, &answers);
     render(&findings, identities.len(), online, options.json)?;
+    if options.fix && !findings.is_empty() {
+        return apply(config, &findings, options.yes);
+    }
     Ok(if findings.is_empty() { 0 } else { 3 })
+}
+
+fn confirm(question: &str) -> Result<bool> {
+    let mut stderr = std::io::stderr().lock();
+    let _ = write!(stderr, "{question} [y/N] ");
+    let _ = stderr.flush();
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .map_err(|error| format!("read answer: {error}"))?;
+    Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "Yes"))
+}
+
+/// Apply fixes one by one; each goes through the same safety checks as the
+/// command it stands for.
+fn apply(config: &Config, findings: &[Finding], yes: bool) -> Result<u8> {
+    if !yes && !std::io::stdin().is_terminal() {
+        return Err("--fix asks before each change; add --yes to apply without asking".into());
+    }
+    let (mut applied, mut skipped) = (0_usize, 0_usize);
+    for finding in findings {
+        let name = ui::repository_name(&finding.path, &config.roots);
+        if matches!(finding.action, Action::Review) {
+            skipped = skipped.saturating_add(1);
+            continue;
+        }
+        if yes && finding.local_work.is_some() {
+            ui::note(
+                "·",
+                ui::DIM,
+                &format!("skipped {name}: it has work that exists only there"),
+            );
+            skipped = skipped.saturating_add(1);
+            continue;
+        }
+        if !yes {
+            let warning = finding
+                .local_work
+                .as_ref()
+                .map(|work| format!(" (only here: {work})"))
+                .unwrap_or_default();
+            if !confirm(&format!("{} {name}{warning}?", finding.fix))? {
+                skipped = skipped.saturating_add(1);
+                continue;
+            }
+        }
+        let outcome = match &finding.action {
+            Action::Archive => crate::repository_ops::remove(
+                config,
+                &crate::repository_ops::RemoveOptions {
+                    query: finding.path.to_string_lossy().into_owned(),
+                    bare: false,
+                    dry_run: false,
+                    json: false,
+                },
+            ),
+            Action::Relocate { remote } => remote
+                .as_ref()
+                .map_or(Ok(()), |(remote, url)| {
+                    process::git(&finding.path, &["remote", "set-url", "--", remote, url])
+                        .map(|_| ())
+                })
+                .and_then(|()| crate::manifest::adopt(config, &finding.path, false, false, false)),
+            Action::Review => Ok(0),
+        };
+        match outcome {
+            Ok(0) => applied = applied.saturating_add(1),
+            Ok(_) => skipped = skipped.saturating_add(1),
+            Err(error) => {
+                ui::error(&format!("{name}: {error}"));
+                skipped = skipped.saturating_add(1);
+            }
+        }
+    }
+    ui::note(
+        "✓",
+        ui::GOOD,
+        &format!("{applied} fixed, {skipped} left for you"),
+    );
+    Ok(if skipped == 0 { 0 } else { 3 })
 }
 
 type Answers = BTreeMap<PathBuf, GitHub>;
@@ -303,6 +413,7 @@ fn duplicates(config: &Config, identities: &[Identity], answers: &Answers) -> Ve
                 ),
                 fix: format!("repot rm {}", quoted(&identity.path)),
                 local_work: local_work(&identity.path),
+                action: Action::Archive,
             });
         }
     }
@@ -333,10 +444,14 @@ fn findings(config: &Config, identities: &[Identity], answers: &Answers) -> Vec<
                         related: Some(full_name.clone()),
                         detail: format!("now {full_name} on GitHub (was {old})"),
                         fix: format!(
-                            "git -C {path} remote set-url origin {url} && repot adopt {path}",
-                            path = quoted(&identity.path)
+                            "git -C {path} remote set-url {remote} {url} && repot adopt {path}",
+                            path = quoted(&identity.path),
+                            remote = identity.remote,
                         ),
                         local_work: None,
+                        action: Action::Relocate {
+                            remote: Some((identity.remote.clone(), url.clone())),
+                        },
                     });
                     continue;
                 }
@@ -348,6 +463,7 @@ fn findings(config: &Config, identities: &[Identity], answers: &Answers) -> Vec<
                         detail: "archived on GitHub; it will not change anymore".into(),
                         fix: format!("repot rm {}", quoted(&identity.path)),
                         local_work: local_work(&identity.path),
+                        action: Action::Archive,
                     });
                 }
             }
@@ -361,6 +477,7 @@ fn findings(config: &Config, identities: &[Identity], answers: &Answers) -> Vec<
                 ),
                 fix: format!("repot info {}", quoted(&identity.path)),
                 local_work: None,
+                action: Action::Review,
             }),
             _ => {}
         }
@@ -375,6 +492,7 @@ fn findings(config: &Config, identities: &[Identity], answers: &Answers) -> Vec<
                 ),
                 fix: format!("repot adopt {}", quoted(&identity.path)),
                 local_work: None,
+                action: Action::Relocate { remote: None },
             });
         }
     }

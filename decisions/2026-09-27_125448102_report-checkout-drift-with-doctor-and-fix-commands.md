@@ -38,3 +38,12 @@ Doctor never moves, removes or reconfigures anything; users run the suggested
 safety checks and dry runs. It needs `gh` and network access to see renames;
 other forges are checked offline only. One GitHub API call per GitHub checkout
 runs at most eight at a time, well within API limits for a personal machine.
+
+## Update 2026-09-27
+
+At the user's request, `--fix` now applies the suggested commands after asking
+per finding, and `--fix --yes` applies them unattended while skipping every
+finding whose checkout holds work that exists nowhere else. Fixes call the
+existing `repot rm` and `repot adopt` paths, so archive recovery, move checks and
+manifest updates are unchanged. The report alone still changes nothing.
+

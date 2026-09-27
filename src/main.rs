@@ -245,6 +245,20 @@ impl Inspection {
     }
 }
 
+/// Commands that edit the manifest need it locked for writing.
+fn load_config(cli: &Cli) -> Result<config::Config> {
+    if matches!(
+        &cli.command,
+        Commands::Adopt { .. }
+            | Commands::Migrate(_)
+            | Commands::Doctor(doctor::Options { fix: true, .. })
+    ) {
+        config::Config::load_for_write(cli.manifest.as_deref())
+    } else {
+        config::Config::load(cli.manifest.as_deref())
+    }
+}
+
 /// Commands that must work even when the manifest or roots are broken.
 fn run_standalone(cli: &Cli) -> Option<Result<u8>> {
     let result = match &cli.command {
@@ -274,11 +288,7 @@ fn run(cli: Cli) -> Result<u8> {
         return result;
     }
     process::install_cancellation()?;
-    let config = if matches!(cli.command, Commands::Adopt { .. } | Commands::Migrate(_)) {
-        config::Config::load_for_write(cli.manifest.as_deref())?
-    } else {
-        config::Config::load(cli.manifest.as_deref())?
-    };
+    let config = load_config(&cli)?;
     match cli.command {
         Commands::Cd { query } => {
             navigation::jump(

@@ -224,4 +224,63 @@ esac
         assert!(text.contains("same repository as owner/old"));
         assert!(text.contains("repot trash restores it"));
     }
+
+    #[test]
+    fn fix_applies_safe_fixes_and_leaves_unique_work_alone() {
+        let world = World::new();
+        let stale = world.checkout("github.com/owner/old", "https://github.com/owner/old.git");
+        let kept = world.checkout("github.com/owner/new", "https://github.com/owner/new.git");
+        let moved = world.checkout("github.com/owner/moved", "git@github.com:owner/moved.git");
+        let retired = world.checkout(
+            "github.com/owner/retired",
+            "https://github.com/owner/retired.git",
+        );
+        fs::write(retired.join("notes"), "only here").expect("unique work");
+
+        let without_terminal = world
+            .command(env!("CARGO_BIN_EXE_repot"))
+            .args(["doctor", "--fix"])
+            .output()
+            .expect("repot runs");
+        assert!(!without_terminal.status.success());
+        assert!(String::from_utf8_lossy(&without_terminal.stderr).contains("--yes"));
+        assert!(stale.exists(), "nothing changes without confirmation");
+
+        let fixed = world
+            .command(env!("CARGO_BIN_EXE_repot"))
+            .args(["doctor", "--fix", "--yes"])
+            .output()
+            .expect("repot runs");
+        let stderr = String::from_utf8_lossy(&fixed.stderr);
+        assert_eq!(
+            fixed.status.code(),
+            Some(3),
+            "one finding was left: {stderr}"
+        );
+        assert!(stderr.contains("skipped"), "{stderr}");
+        // The stale duplicate is archived, not deleted.
+        assert!(!stale.exists());
+        let trash = world
+            .command(env!("CARGO_BIN_EXE_repot"))
+            .args(["trash", "list", "--json"])
+            .output()
+            .expect("trash");
+        assert!(String::from_utf8_lossy(&trash.stdout).contains("owner/old"));
+        assert!(kept.exists());
+        // The renamed checkout now tracks the new name and lives there.
+        assert!(!moved.exists());
+        let relocated = world.path("root/github.com/elsewhere/moved");
+        let url = world
+            .command("git")
+            .current_dir(&relocated)
+            .args(["remote", "get-url", "origin"])
+            .output()
+            .expect("git");
+        assert_eq!(
+            String::from_utf8_lossy(&url.stdout).trim(),
+            "git@github.com:elsewhere/moved.git"
+        );
+        // Unique work is never touched unattended.
+        assert!(retired.join("notes").exists());
+    }
 }

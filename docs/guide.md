@@ -276,6 +276,8 @@ nothing itself.
 repot doctor              # asks GitHub through gh when it is installed
 repot doctor --offline    # local checks only
 repot doctor --json
+repot doctor --fix        # apply fixes, asking before each one
+repot doctor --fix --yes  # apply without asking; skips checkouts with unique work
 ```
 
 | Finding | Meaning | Suggested fix |
@@ -291,6 +293,13 @@ Before suggesting removal, doctor lists work that exists only in the stale copy:
 changed files, stashes, unpushed commits and linked worktrees. `repot rm`
 archives the entire checkout, so `repot trash restore` can bring it back. Doctor
 exits 3 when it has findings and 0 when everything is where it belongs.
+
+`--fix` applies the same commands, asking before each one and naming any work
+that exists only in that checkout. `--fix --yes` runs unattended and skips every
+finding with such work. Each fix goes through the normal checks of `repot rm` and
+`repot adopt`; a renamed repository first gets its remote URL updated, then moves
+to its new name's location. Findings without a safe automatic fix, such as a
+repository missing from GitHub, are always left for you.
 
 ## Stale repositories
 
