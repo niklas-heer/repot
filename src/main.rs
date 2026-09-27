@@ -23,6 +23,7 @@ mod status;
 mod sync;
 mod ui;
 mod visits;
+mod work;
 
 use clap::{Args, CommandFactory, FromArgMatches as _, Parser, Subcommand};
 use std::io::Write as _;
@@ -155,6 +156,9 @@ enum Commands {
         /// Maximum duration of each clone, in seconds.
         #[arg(long, default_value_t = 120, value_parser = clap::value_parser!(u64).range(1..=3600))]
         timeout: u64,
+        /// Maximum concurrent clones.
+        #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u8).range(1..=32))]
+        jobs: u8,
     },
     /// Archive a checkout out of the tree; `repot trash` brings it back.
     Rm(repository_ops::RemoveOptions),
@@ -323,12 +327,14 @@ fn run(cli: Cli) -> Result<u8> {
             dry_run,
             json,
             timeout,
+            jobs,
         } => {
             return manifest::restore(
                 &config,
                 dry_run,
                 json,
                 std::time::Duration::from_secs(timeout),
+                usize::from(jobs),
             );
         }
         Commands::Rm(options) => return repository_ops::remove(&config, &options),

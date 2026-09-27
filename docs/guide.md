@@ -295,7 +295,9 @@ See [Configuration](configuration.md) for TOML, KDL and YAML manifests, path exp
 comment-preserving registration and dotfiles symlinks.
 
 Restore skips `restore = false` entries and **every** existing destination, including
-files and dangling symlinks. Missing checkouts are cloned into private staging
+files and dangling symlinks. It clones up to eight entries at once (`--jobs`);
+entries with equal or nested destinations still run one after another in
+manifest order. Missing checkouts are cloned into private staging
 folders and installed with an atomic no-overwrite rename. One clone failure does
 not prevent independent entries from restoring. Submodules are not cloned
 recursively. Local absolute/file remotes are supported only for entries with an

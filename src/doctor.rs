@@ -7,13 +7,13 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use serde::Serialize;
 
 use crate::config::{Config, remote_parts};
 use crate::discovery::{self, Repository};
+use crate::work::parallel;
 use crate::{Result, process, ui};
 
 #[derive(Debug, clap::Args)]
@@ -223,42 +223,6 @@ fn renamed_url(url: &str, full_name: &str) -> String {
     }
 }
 
-fn parallel<T: Sync, R: Send>(
-    items: &[T],
-    jobs: usize,
-    progress: Option<&ui::Progress>,
-    work: impl Fn(&T) -> R + Sync,
-) -> Vec<R> {
-    let next = AtomicUsize::new(0);
-    let workers = jobs.clamp(1, 32).min(items.len().max(1));
-    let mut results: Vec<(usize, R)> = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..workers)
-            .map(|_| {
-                scope.spawn(|| {
-                    let mut done = Vec::new();
-                    loop {
-                        let index = next.fetch_add(1, Ordering::Relaxed);
-                        let Some(item) = items.get(index) else {
-                            break;
-                        };
-                        done.push((index, work(item)));
-                        if let Some(progress) = progress {
-                            progress.advance();
-                        }
-                    }
-                    done
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .flat_map(|handle| handle.join().unwrap_or_default())
-            .collect()
-    });
-    results.sort_by_key(|(index, _)| *index);
-    results.into_iter().map(|(_, result)| result).collect()
-}
-
 pub fn run(config: &Config, options: &Options) -> Result<u8> {
     let repositories: Vec<Repository> = discovery::discover(config)?;
     let jobs = usize::from(options.jobs);
@@ -266,7 +230,7 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
     let progress = (!options.json).then(|| ui::Progress::start("Checking", repositories.len()));
     let identities: Vec<Identity> = parallel(&repositories, jobs, progress.as_ref(), |repo| {
         identify(&repo.path)
-    })
+    })?
     .into_iter()
     .flatten()
     .collect();
@@ -283,7 +247,7 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
         }
         let answers = parallel(&hosted, jobs.min(8), progress.as_ref(), |identity| {
             github(identity, timeout)
-        });
+        })?;
         hosted
             .into_iter()
             .map(|identity| identity.path.clone())

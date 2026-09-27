@@ -694,6 +694,50 @@ mod tests {
     }
 
     #[test]
+    fn parallel_restore_clones_every_entry_and_keeps_nested_destinations_ordered() {
+        let world = World::new();
+        let seed = world.init("seed", None);
+        world.commit(&seed, "content");
+        let remote = world.path("remote.git");
+        world.git(
+            world.home.path(),
+            &["clone", "--bare", text(&seed), text(&remote)],
+        );
+        let mut source: String = (0..8)
+            .map(|index| Format::Toml.repo(text(&remote), Some(&format!("~/many/{index}")), None))
+            .collect();
+        // A one-by-one restore clones the outer checkout, then the nested one
+        // inside it. Run in parallel, the nested clone could create `outer/`
+        // first and make the outer one fail; grouping keeps manifest order.
+        source += &Format::Toml.repo(text(&remote), Some("~/outer"), None);
+        source += &Format::Toml.repo(text(&remote), Some("~/outer/inner"), None);
+        world.write(Format::Toml, &source);
+        let output = world.run(None, &["restore", "--json", "--jobs", "8"]);
+        let reports = json(&output);
+        let actions: Vec<_> = reports
+            .iter()
+            .map(|entry| entry["action"].as_str().expect("action").to_owned())
+            .collect();
+        assert_eq!(actions, ["clone"; 10], "{reports:?}");
+        assert!(world.path("outer/inner/content").exists());
+        assert!(world.path("outer/content").exists());
+        for index in 0..8 {
+            assert_eq!(
+                fs::read_to_string(world.path(&format!("many/{index}/content"))).expect("content"),
+                "content"
+            );
+        }
+        let paths: Vec<_> = reports
+            .iter()
+            .map(|entry| entry["path"].as_str().expect("path").to_owned())
+            .collect();
+        assert!(
+            paths[9].ends_with("outer/inner"),
+            "reports keep manifest order"
+        );
+    }
+
+    #[test]
     fn seeded_persistent_edit_sequences_match_the_same_model_in_all_formats() {
         for seed in [3_u64, 17, 91] {
             for format in [Format::Toml, Format::Kdl, Format::Yaml] {

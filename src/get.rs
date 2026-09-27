@@ -123,7 +123,6 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
     } else {
         1
     };
-    let size = specs.len().div_ceil(jobs).max(1);
     let spinner = (!options.json && !options.silent && !specs.is_empty()).then(|| {
         ui::Progress::start(
             if options.dry_run {
@@ -135,39 +134,16 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
         )
     });
     let progress = spinner.as_ref();
-    let reports = std::thread::scope(|scope| {
-        let handles: Vec<_> = specs
-            .chunks(size)
-            .map(|chunk| {
-                scope.spawn(move || {
-                    chunk
-                        .iter()
-                        .map(|spec| {
-                            if let Some(progress) = progress {
-                                progress
-                                    .working_on(&ui::repository_name(&spec.path, &config.roots));
-                            }
-                            let report =
-                                get(config, spec, options, true).unwrap_or_else(|reason| Report {
-                                    path: spec.path.clone(),
-                                    action: "failed".into(),
-                                    reason,
-                                    code: 1,
-                                });
-                            if let Some(progress) = progress {
-                                progress.advance();
-                            }
-                            report
-                        })
-                        .collect::<Vec<_>>()
-                })
-            })
-            .collect();
-        let mut reports = Vec::new();
-        for handle in handles {
-            reports.extend(handle.join().map_err(|_| "clone worker failed")?);
+    let reports = crate::work::parallel(&specs, jobs, progress, |spec| {
+        if let Some(progress) = progress {
+            progress.working_on(&ui::repository_name(&spec.path, &config.roots));
         }
-        Ok::<_, String>(reports)
+        get(config, spec, options, true).unwrap_or_else(|reason| Report {
+            path: spec.path.clone(),
+            action: "failed".into(),
+            reason,
+            code: 1,
+        })
     })?;
     drop(spinner);
     let code = if reports.iter().any(|report| report.code == 1) {

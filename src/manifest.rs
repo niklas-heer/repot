@@ -336,35 +336,87 @@ fn clone_url(entry: &RepoEntry) -> Result<String> {
     Ok(url.clone())
 }
 
-pub fn restore(config: &Config, dry_run: bool, json: bool, timeout: Duration) -> Result<u8> {
-    let reports: Vec<_> = config
+pub fn restore(
+    config: &Config,
+    dry_run: bool,
+    json: bool,
+    timeout: Duration,
+    jobs: usize,
+) -> Result<u8> {
+    let restore_entry = |entry: &RepoEntry| match entry_path(config, entry) {
+        Ok(path) => match restore_one(entry, &path, dry_run, timeout) {
+            Ok((action, reason)) => Report {
+                path,
+                action,
+                reason: reason.into(),
+            },
+            Err(reason) => Report {
+                path,
+                action: "error",
+                reason,
+            },
+        },
+        Err(reason) => Report {
+            path: config.manifest_path.clone(),
+            action: "error",
+            reason,
+        },
+    };
+    // Entries stage their own clones before an atomic, non-overwriting rename,
+    // so unrelated destinations clone side by side. Entries whose destinations
+    // are equal or nested run one after another, in manifest order, exactly as
+    // a sequential restore would.
+    let groups = destination_groups(config);
+    let progress = (!json && !dry_run && !config.manifest.repo.is_empty())
+        .then(|| crate::ui::Progress::start("Restoring", groups.len()));
+    let grouped = crate::work::parallel(&groups, jobs, progress.as_ref(), |group| {
+        group
+            .iter()
+            .filter_map(|index| config.manifest.repo.get(*index))
+            .map(restore_entry)
+            .zip(group.iter().copied())
+            .collect::<Vec<_>>()
+    })?;
+    let mut reports: Vec<(usize, Report)> = grouped
+        .into_iter()
+        .flatten()
+        .map(|(report, index)| (index, report))
+        .collect();
+    reports.sort_by_key(|(index, _)| *index);
+    let reports: Vec<Report> = reports.into_iter().map(|(_, report)| report).collect();
+    drop(progress);
+    render(&reports, json)
+}
+
+/// Manifest indices grouped so that equal or nested destinations share a group.
+fn destination_groups(config: &Config) -> Vec<Vec<usize>> {
+    let paths: Vec<Option<PathBuf>> = config
         .manifest
         .repo
         .iter()
-        .map(|entry| {
-            let path = entry_path(config, entry);
-            match path {
-                Ok(path) => match restore_one(entry, &path, dry_run, timeout) {
-                    Ok((action, reason)) => Report {
-                        path,
-                        action,
-                        reason: reason.into(),
-                    },
-                    Err(reason) => Report {
-                        path,
-                        action: "error",
-                        reason,
-                    },
-                },
-                Err(reason) => Report {
-                    path: config.manifest_path.clone(),
-                    action: "error",
-                    reason,
-                },
-            }
-        })
+        .map(|entry| entry_path(config, entry).ok())
         .collect();
-    render(&reports, json)
+    let related = |left: usize, right: usize| match (paths.get(left), paths.get(right)) {
+        (Some(Some(left)), Some(Some(right))) => left.starts_with(right) || right.starts_with(left),
+        _ => false,
+    };
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for index in 0..paths.len() {
+        let joined: Vec<usize> = groups
+            .iter()
+            .enumerate()
+            .filter(|(_, group)| group.iter().any(|member| related(*member, index)))
+            .map(|(position, _)| position)
+            .collect();
+        let mut merged = vec![index];
+        for position in joined.into_iter().rev() {
+            merged.extend(groups.remove(position));
+        }
+        merged.sort_unstable();
+        groups.push(merged);
+    }
+    groups.sort_by_key(|group| group.first().copied());
+    groups
 }
 
 fn restore_one(
