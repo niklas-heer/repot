@@ -102,3 +102,42 @@ against repot's ignored-file, hidden-index-flag, submodule, linked-worktree,
 no-autostash and exact-ref invariants before migration. SSH/file transports can
 spawn external programs, so enabling native clone does not by itself deliver a
 fully standalone binary. No such claim is made here.
+
+## After v0.2.0: subprocess waits, collisions and spawn counts
+
+The harness now also counts Git subprocesses per status run through a logging
+wrapper on `PATH` inside the isolated home, outside the timed samples. Run it
+against the released v0.2.0 binary as the baseline:
+
+```sh
+cargo build --release --bin repot
+python3 scripts/benchmark.py --baseline "$(command -v repot)" --baseline-revision v0.2.0
+```
+
+Measured on 2026-09-27 on an Apple Silicon Mac
+([raw samples](2026-09-27-macos-arm64-after-v0.2.0.json)), 24 clean clones,
+`--jobs 4`, status JSON identical between versions:
+
+| | v0.2.0 | current |
+| --- | ---: | ---: |
+| `repot status --no-fetch` median | 564 ms | 341 ms |
+| Git spawns per repository | 14.0 | 14.0 |
+
+The gain comes from blocking on subprocess output instead of polling every
+5 ms; the work done is unchanged. On 45 real checkouts `status --no-fetch` went
+from 0.91 s to 0.83 s with `--jobs 24`.
+
+Two further changes do not show on this clean corpus:
+
+- **Ignored-file collisions.** Before a fast-forward, the ignored files were
+  compared with every file of the target tree. On a real checkout with 29,712
+  ignored and 12,662 tracked files that took 10.3 s for one pending update; with
+  collapsed ignored directories and set lookups it takes 5 ms.
+- **Network.** Fetching dominates `repot status` with network access. Each
+  checkout now opens one connection instead of two (the default-branch query is
+  skipped when the cached remote HEAD already names the current branch), and 24
+  repositories are fetched at once. On 45 real checkouts over SSH, status fell
+  from 17 s to about 5 s. SSH connection sharing (`ControlMaster`) saved only
+  about 10% at that parallelism, so repot does not configure it; the user guide
+  shows how to enable it in `~/.ssh/config`.
+

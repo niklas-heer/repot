@@ -1,0 +1,111 @@
+{
+  "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "architecture": "arm64",
+  "repositories": 24,
+  "tracked_files_per_repository": 16,
+  "root_mode": "env",
+  "baseline_revision": "v0.2.0",
+  "repetitions": 9,
+  "warmups": 2,
+  "status_jobs": 4,
+  "cache": "warm OS caches; no cache dropping",
+  "network": "none",
+  "parity": "identical sorted full-path lists; identical baseline/current status JSON",
+  "versions": {
+    "git": "git version 2.55.0",
+    "ghq": "ghq version 1.10.1 (rev:f600896)",
+    "repot": "repot 0.2.0"
+  },
+  "binary_bytes": {
+    "repot": 11254608,
+    "ghq": 9504322,
+    "baseline": 10963600
+  },
+  "binary_sha256": {
+    "repot": "7e2ac647d74a253a16f2f2204224092778a6654a7e1a9ffd234b7814ce65e10d",
+    "ghq": "2e522e28a0fa964af312e88255ac49802b5b7e2d60d25e5d1761420e803a542c",
+    "baseline": "5281612cd40ec39f7fb03fa5b960a4e6a8d079aac901bff17c30b8e2f6d5726d"
+  },
+  "measurements": {
+    "ghq_list": {
+      "median_ms": 5.224667,
+      "min_ms": 4.922583,
+      "max_ms": 6.928042,
+      "samples_ms": [
+        5.122041,
+        4.922583,
+        5.018208,
+        5.315209,
+        5.224667,
+        6.928042,
+        5.375375,
+        4.956208,
+        5.307125
+      ]
+    },
+    "repot_list": {
+      "median_ms": 3.56625,
+      "min_ms": 3.360708,
+      "max_ms": 3.735291,
+      "samples_ms": [
+        3.526,
+        3.661625,
+        3.464,
+        3.56625,
+        3.360708,
+        3.735291,
+        3.590125,
+        3.4955,
+        3.662667
+      ]
+    },
+    "repot_status": {
+      "median_ms": 340.771542,
+      "min_ms": 335.334166,
+      "max_ms": 396.446792,
+      "samples_ms": [
+        345.627041,
+        336.343667,
+        340.771542,
+        335.503042,
+        335.334166,
+        336.856375,
+        396.446792,
+        393.5305,
+        346.57875
+      ]
+    },
+    "baseline_status": {
+      "median_ms": 563.568625,
+      "min_ms": 559.615583,
+      "max_ms": 572.658708,
+      "samples_ms": [
+        564.628542,
+        561.019792,
+        562.725875,
+        563.568625,
+        562.365792,
+        563.87275,
+        572.658708,
+        559.615583,
+        564.830584
+      ]
+    }
+  },
+  "limitations": [
+    "One machine and synthetic small clean repositories",
+    "Includes process startup and captured stdout",
+    "ghq has no equivalent status command; status compares repot versions",
+    "New repot includes other concurrent feature changes; not an isolated gix microbenchmark"
+  ],
+  "git_spawns": {
+    "repot_status": {
+      "git_spawns": 336,
+      "per_repository": 14.0
+    },
+    "baseline_status": {
+      "git_spawns": 336,
+      "per_repository": 14.0
+    }
+  }
+}

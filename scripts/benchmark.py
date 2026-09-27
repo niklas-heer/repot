@@ -124,6 +124,26 @@ def main():
                             "ghq has no equivalent status command; status compares repot versions",
                             "New repot includes other concurrent feature changes; not an isolated gix microbenchmark"],
         }
+        # Count Git subprocesses per status run through a logging wrapper that
+        # execs the real Git. Kept out of the timed samples: the wrapper adds a
+        # shell to every spawn.
+        real_git = shutil.which("git", path=env.get("PATH"))
+        wrappers = home / "spawn-count"
+        wrappers.mkdir()
+        spawn_log = home / "spawns.log"
+        wrapper = wrappers / "git"
+        wrapper.write_text(f'#!/bin/sh\nprintf "%s\\n" "$1" >> "{spawn_log}"\nexec "{real_git}" "$@"\n')
+        wrapper.chmod(0o755)
+        spawns = {}
+        for name, command in commands.items():
+            if not name.endswith("status"):
+                continue
+            spawn_log.unlink(missing_ok=True)
+            subprocess.run(command, cwd=home, env=dict(env, PATH=f"{wrappers}:{env.get('PATH', '')}"),
+                           capture_output=True, check=True, timeout=120)
+            count = len(spawn_log.read_text().splitlines()) if spawn_log.exists() else 0
+            spawns[name] = {"git_spawns": count, "per_repository": round(count / args.repos, 2)}
+        result["git_spawns"] = spawns
         if args.layout_bench:
             result["layout_microbenchmark"] = json.loads(run([str(args.layout_bench.resolve(strict=True)), *repositories]))
         if baseline:
