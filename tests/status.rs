@@ -382,6 +382,40 @@ mod tests {
     }
 
     #[test]
+    fn ignored_build_directories_block_only_real_collisions() {
+        for (local, incoming, safe) in [
+            ("target/debug/app", "target/debug/app", false),
+            ("target/debug/app", "target/README", true),
+            ("target/debug/app", "target", false),
+        ] {
+            let f = Fixture::new();
+            fs::write(f.repo.join(".git/info/exclude"), "target/\n").expect("ignore build output");
+            let file = f.repo.join(local);
+            fs::create_dir_all(file.parent().expect("parent")).expect("build directory");
+            fs::write(&file, "local build output").expect("ignored file");
+            for index in 0..50 {
+                fs::write(f.repo.join(format!("target/debug/dep-{index}")), "x")
+                    .expect("more output");
+            }
+            let upstream = f.source.join(incoming);
+            fs::create_dir_all(upstream.parent().expect("parent")).expect("upstream directory");
+            f.commit(&f.source, incoming, "tracked upstream");
+            f.git(&f.source, &["push", "origin", "main"]);
+            let (output, status) = f.run(&["sync", "--json"]);
+            assert_eq!(
+                status[0]["applied"],
+                safe,
+                "{local} vs {incoming}: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            assert_eq!(
+                fs::read_to_string(&file).expect("ignored work survives"),
+                "local build output"
+            );
+        }
+    }
+
+    #[test]
     fn configured_fetch_refspec_cannot_overwrite_local_branch() {
         let f = Fixture::new();
         f.commit(&f.repo, "local", "local-only commit");

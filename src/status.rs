@@ -1,5 +1,6 @@
 //! Repository observations and conservative, reusable update plans.
 
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::io::IsTerminal;
@@ -875,6 +876,13 @@ fn blocked(path: &Path, timeout: Duration) -> Result<Option<&'static str>> {
     Ok(None)
 }
 
+/// Would updating to `target` overwrite an ignored local file?
+///
+/// Git collapses wholly ignored directories (`target/`, `node_modules/`) into
+/// one entry, so a Rust or Node checkout yields a handful of entries instead of
+/// tens of thousands of files. Only a collapsed directory that the target tree
+/// also tracks files inside is expanded again, which keeps the answer identical
+/// to comparing every ignored file.
 fn ignored_collision(path: &Path, target: &str, timeout: Duration) -> Result<bool> {
     let ignored = required(
         path,
@@ -883,6 +891,8 @@ fn ignored_collision(path: &Path, target: &str, timeout: Duration) -> Result<boo
             "--others",
             "--ignored",
             "--exclude-standard",
+            "--directory",
+            "--no-empty-directory",
             "-z",
         ],
         timeout,
@@ -895,17 +905,72 @@ fn ignored_collision(path: &Path, target: &str, timeout: Duration) -> Result<boo
         &["ls-tree", "-r", "--name-only", "-z", target],
         timeout,
     )?;
-    Ok(ignored
+    let mut expansion_failed = false;
+    let collision = collides(&ignored, &tracked, |directory| {
+        let files = required(
+            path,
+            &[
+                "ls-files",
+                "--others",
+                "--ignored",
+                "--exclude-standard",
+                "-z",
+                "--",
+                &format!(":(literal){directory}/"),
+            ],
+            timeout,
+        );
+        files.unwrap_or_else(|_| {
+            expansion_failed = true;
+            String::new()
+        })
+    });
+    if expansion_failed {
+        return Err("Git inspection failed".into());
+    }
+    Ok(collision)
+}
+
+/// `ignored` holds NUL-separated ignored files and collapsed directories (with
+/// a trailing `/`); `tracked` the NUL-separated files of the target tree.
+fn collides(ignored: &str, tracked: &str, mut expand: impl FnMut(&str) -> String) -> bool {
+    let files: HashSet<&str> = tracked
         .split('\0')
         .filter(|name| !name.is_empty())
-        .any(|name| {
-            tracked
-                .split('\0')
-                .filter(|entry| !entry.is_empty())
-                .any(|entry| {
-                    Path::new(name).starts_with(entry) || Path::new(entry).starts_with(name)
-                })
-        }))
+        .collect();
+    let directories: HashSet<&str> = files
+        .iter()
+        .flat_map(|file| {
+            file.match_indices('/')
+                .filter_map(|(index, _)| file.get(..index))
+        })
+        .collect();
+    // A tracked file at the entry itself or at any of its parents.
+    let under_file = |entry: &str| {
+        files.contains(entry)
+            || entry
+                .match_indices('/')
+                .filter_map(|(index, _)| entry.get(..index))
+                .any(|parent| files.contains(parent))
+    };
+    for entry in ignored.split('\0').filter(|name| !name.is_empty()) {
+        if let Some(directory) = entry.strip_suffix('/') {
+            if under_file(directory) {
+                return true;
+            }
+            if directories.contains(directory)
+                && expand(directory)
+                    .split('\0')
+                    .filter(|name| !name.is_empty())
+                    .any(|file| under_file(file) || directories.contains(file))
+            {
+                return true;
+            }
+        } else if under_file(entry) || directories.contains(entry) {
+            return true;
+        }
+    }
+    false
 }
 
 fn owned(path: &Path, remote: &str, config: &Config, timeout: Duration) -> Result<bool> {
@@ -1166,6 +1231,97 @@ mod tests {
             untracked: 1,
             ..Dirty::default()
         }
+    }
+
+    /// The original quadratic comparison, kept as the oracle for `collides`.
+    fn oracle(ignored_files: &[String], tracked: &[String]) -> bool {
+        ignored_files.iter().any(|name| {
+            tracked.iter().any(|entry| {
+                Path::new(name).starts_with(entry) || Path::new(entry).starts_with(name)
+            })
+        })
+    }
+
+    #[test]
+    fn collapsed_ignored_directories_give_the_same_answer_as_every_file() {
+        let names = ["a", "b", "target", "x.rs"];
+        let mut random = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = |bound: usize| {
+            random ^= random << 13;
+            random ^= random >> 7;
+            random ^= random << 17;
+            usize::try_from(random % u64::try_from(bound).expect("bound")).expect("index")
+        };
+        let path = |next: &mut dyn FnMut(usize) -> usize| {
+            let depth = next(3) + 1;
+            (0..depth)
+                .map(|_| names[next(names.len())])
+                .collect::<Vec<_>>()
+                .join("/")
+        };
+        let mut checked = 0;
+        for _ in 0..4000 {
+            let tracked: Vec<String> = (0..next(5)).map(|_| path(&mut next)).collect();
+            let index: Vec<String> = (0..next(3)).map(|_| path(&mut next)).collect();
+            let ignored: Vec<String> = (0..next(6)).map(|_| path(&mut next)).collect();
+            // Skip layouts a real worktree cannot have: a path that is both a
+            // file and a directory.
+            let all: Vec<&String> = index.iter().chain(&ignored).collect();
+            if all.iter().any(|left| {
+                all.iter()
+                    .any(|right| right.starts_with(&format!("{left}/")))
+            }) {
+                continue;
+            }
+            if tracked.iter().any(|left| {
+                tracked
+                    .iter()
+                    .any(|right| right.starts_with(&format!("{left}/")))
+            }) {
+                continue;
+            }
+            // Collapse like `git ls-files --directory`: the shallowest
+            // directory holding only ignored files becomes one entry.
+            let mut collapsed: Vec<String> = Vec::new();
+            for file in &ignored {
+                let parts: Vec<&str> = file.split('/').collect();
+                let entry = (1..parts.len())
+                    .map(|depth| parts[..depth].join("/"))
+                    .find(|directory| {
+                        !index
+                            .iter()
+                            .any(|file| file.starts_with(&format!("{directory}/")))
+                    })
+                    .map_or_else(|| file.clone(), |directory| format!("{directory}/"));
+                if !collapsed.contains(&entry) {
+                    collapsed.push(entry);
+                }
+            }
+            let expand = |directory: &str| {
+                ignored
+                    .iter()
+                    .filter(|file| file.starts_with(&format!("{directory}/")))
+                    .fold(String::new(), |mut list, file| {
+                        list.push_str(file);
+                        list.push('\0');
+                        list
+                    })
+            };
+            let joined = |items: &[String]| {
+                items.iter().fold(String::new(), |mut list, item| {
+                    list.push_str(item);
+                    list.push('\0');
+                    list
+                })
+            };
+            assert_eq!(
+                collides(&joined(&collapsed), &joined(&tracked), expand),
+                oracle(&ignored, &tracked),
+                "ignored {ignored:?} collapsed {collapsed:?} tracked {tracked:?} index {index:?}"
+            );
+            checked += 1;
+        }
+        assert!(checked > 1000, "only {checked} valid layouts generated");
     }
 
     #[test]
