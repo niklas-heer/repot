@@ -86,7 +86,7 @@ see [Development](development.md).
 
 A child process cannot change its parent shell's directory. These wrappers follow
 the directory handoff only after a successful repot command. Without a wrapper,
-`jump` prints the selected path.
+`repot cd` prints the selected path.
 
 ### Bash and Zsh
 

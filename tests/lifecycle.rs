@@ -187,6 +187,30 @@ mod tests {
     }
 
     #[test]
+    fn new_with_an_owner_creates_an_empty_repository_at_its_tree_location() {
+        let world = World::new();
+        let before = world.snapshot();
+        let planned = world.repot(&["new", "example.test/team/project", "--dry-run"]);
+        assert_success(&planned);
+        assert!(String::from_utf8_lossy(&planned.stdout).contains("example.test/team/project"));
+        assert_eq!(world.snapshot(), before, "dry run changed the filesystem");
+        assert_success(&world.repot(&["new", "example.test/team/project"]));
+        let created = world.path("repository roots/example.test/team/project");
+        assert!(created.join(".git").is_dir());
+        assert!(!world.path("repository roots/local").exists());
+        assert!(
+            !world
+                .repot(&["new", "example.test/team/project"])
+                .status
+                .success(),
+            "an existing destination is never reused"
+        );
+        let bare_scratch = world.repot(&["new", "plain", "--bare"]);
+        assert!(!bare_scratch.status.success());
+        assert!(String::from_utf8_lossy(&bare_scratch.stderr).contains("owner/name"));
+    }
+
+    #[test]
     fn new_uses_the_last_configured_ghq_root() {
         let world = World::new();
         world.git(
@@ -216,7 +240,6 @@ mod tests {
             "",
             ".",
             "..",
-            "bad/name",
             "bad\\name",
             "two words",
             "-option",

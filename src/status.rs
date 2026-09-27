@@ -12,6 +12,7 @@ use crate::Result;
 use crate::config::{Config, remote_parts};
 use crate::discovery;
 use crate::process;
+use crate::ui;
 
 pub struct Options {
     pub json: bool,
@@ -87,24 +88,66 @@ impl Report {
 }
 
 pub fn run(config: &Config, options: &Options) -> Result<u8> {
-    let reports = collect(config, options)?;
-    render(&reports, options.json)
+    let started = std::time::Instant::now();
+    let reports = {
+        let progress = (!options.json).then(|| {
+            ui::Progress::start(
+                if options.no_fetch {
+                    "Inspecting"
+                } else {
+                    "Fetching"
+                },
+                0,
+            )
+        });
+        collect(config, options, progress.as_ref())?
+    };
+    render(
+        &reports,
+        options.json,
+        &View {
+            roots: &config.roots,
+            mode: if options.no_fetch {
+                Mode::Cached
+            } else {
+                Mode::Status
+            },
+            elapsed: started.elapsed(),
+        },
+    )
 }
 
-pub fn collect(config: &Config, options: &Options) -> Result<Vec<Report>> {
+pub fn collect(
+    config: &Config,
+    options: &Options,
+    progress: Option<&ui::Progress>,
+) -> Result<Vec<Report>> {
     let repositories = discovery::discover(config)?;
-    let chunk_size = repositories
-        .len()
-        .div_ceil(options.jobs.clamp(1, 32))
-        .max(1);
+    if let Some(progress) = progress {
+        progress.phase(
+            if options.no_fetch {
+                "Inspecting"
+            } else {
+                "Fetching"
+            },
+            repositories.len(),
+        );
+    }
+    // A shared queue keeps every worker busy even when one remote is slow.
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let workers = options.jobs.clamp(1, 32).min(repositories.len().max(1));
     let mut reports = std::thread::scope(|scope| {
-        let handles: Vec<_> = repositories
-            .chunks(chunk_size)
-            .map(|chunk| {
-                scope.spawn(move || {
-                    chunk
-                        .iter()
-                        .map(|repo| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut reports = Vec::new();
+                    while let Some(repo) =
+                        repositories.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+                    {
+                        if let Some(progress) = progress {
+                            progress.working_on(&ui::repository_name(&repo.path, &config.roots));
+                        }
+                        reports.push(
                             inspect(&repo.path, config, options, !options.no_fetch).unwrap_or_else(
                                 |_| {
                                     let mut report = Report::empty(&repo.path);
@@ -113,9 +156,13 @@ pub fn collect(config: &Config, options: &Options) -> Result<Vec<Report>> {
                                         .fail("could not inspect repository; inspect it with git");
                                     report
                                 },
-                            )
-                        })
-                        .collect::<Vec<_>>()
+                            ),
+                        );
+                        if let Some(progress) = progress {
+                            progress.advance();
+                        }
+                    }
+                    reports
                 })
             })
             .collect();
@@ -133,14 +180,29 @@ pub fn collect(config: &Config, options: &Options) -> Result<Vec<Report>> {
     Ok(reports)
 }
 
-pub fn render(reports: &[Report], json: bool) -> Result<u8> {
+/// What produced a set of reports, which changes how results are described.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Status,
+    Cached,
+    Sync,
+    SyncPlan,
+}
+
+pub struct View<'a> {
+    pub roots: &'a [PathBuf],
+    pub mode: Mode,
+    pub elapsed: Duration,
+}
+
+pub fn render(reports: &[Report], json: bool, view: &View<'_>) -> Result<u8> {
     if json {
         println!(
             "{}",
             serde_json::to_string_pretty(reports).map_err(|error| error.to_string())?
         );
     } else if std::io::stdout().is_terminal() {
-        print!("{}", terminal_report(reports));
+        print!("{}", terminal_report(reports, view));
     } else {
         for report in reports {
             println!(
@@ -169,82 +231,280 @@ pub fn render(reports: &[Report], json: bool) -> Result<u8> {
     })
 }
 
-fn terminal_report(reports: &[Report]) -> String {
-    use crossterm::style::{Color, Stylize};
-
-    let color = std::env::var_os("NO_COLOR").is_none()
-        && std::env::var_os("TERM").is_none_or(|term| term != "dumb");
-    let heading = format!(
-        "repot  ·  {} repositories\n\n{:<15} {:<20} REPOSITORY\n",
-        reports.len(),
-        "ACTION",
-        "BRANCH"
-    );
-    let heading = if color {
-        heading.bold().to_string()
-    } else {
-        heading
-    };
-    let rows = reports.iter().fold(String::new(), |mut rows, report| {
-        let action = if report.applied {
-            format!("done: {}", report.action)
-        } else {
-            report.action.clone()
-        };
-        let action = format!("{action:<15}");
-        let action = if color {
-            let tint = if report.failed {
-                Color::Red
-            } else if matches!(report.action.as_str(), "review" | "push") {
-                Color::Yellow
-            } else {
-                Color::Green
-            };
-            action.with(tint).to_string()
-        } else {
-            action
-        };
-        let branch = terminal_text(report.branch.as_deref().unwrap_or("(detached)"));
-        let path = terminal_text(&report.path.to_string_lossy());
-        let details = format!(
-            "  {} · +{} / -{} commits · staged {} / changed {} / untracked {} · stashes {}\n  {}\n",
-            terminal_text(&report.state),
-            report.ahead,
-            report.behind,
-            report.dirty.staged,
-            report.dirty.unstaged,
-            report.dirty.untracked,
-            report.stashes,
-            terminal_text(&report.reason)
-        );
-        let details = if color {
-            details.dim().to_string()
-        } else {
-            details
-        };
-        let _ = writeln!(rows, "{action} {branch:<20} {path}\n{details}");
-        rows
-    });
-    let applied = reports.iter().filter(|report| report.applied).count();
-    let failed = reports.iter().filter(|report| report.failed).count();
-    let attention = reports
-        .iter()
-        .filter(|report| matches!(report.action.as_str(), "review" | "push"))
-        .count();
-    format!("{heading}{rows}{applied} applied · {attention} need attention · {failed} failed\n")
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Group {
+    Failed,
+    Review,
+    Push,
+    Update,
+    Updated,
+    Clean,
 }
 
-fn terminal_text(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| {
-            if character.is_control() {
-                character.escape_default().to_string()
-            } else {
-                character.to_string()
+impl Group {
+    fn of(report: &Report) -> Self {
+        if report.failed {
+            Self::Failed
+        } else if report.applied {
+            Self::Updated
+        } else {
+            match report.action.as_str() {
+                "pull" | "return" => Self::Update,
+                "push" => Self::Push,
+                "none" => Self::Clean,
+                _ => Self::Review,
             }
+        }
+    }
+
+    const fn heading(self, mode: Mode) -> (&'static str, &'static str, ui::Style) {
+        match self {
+            Self::Failed => ("✗", "Failed", ui::BAD),
+            Self::Review => ("●", "Needs review", ui::WARN),
+            Self::Push => ("↑", "Ready to push", ui::PUSH),
+            Self::Update => (
+                "↓",
+                match mode {
+                    Mode::SyncPlan => "Would update",
+                    _ => "Ready to update",
+                },
+                ui::INFO,
+            ),
+            Self::Updated => ("✓", "Updated", ui::GOOD),
+            Self::Clean => ("✓", "Up to date", ui::GOOD),
+        }
+    }
+}
+
+fn plural(count: usize, one: &str, many: &str) -> String {
+    format!("{count} {}", if count == 1 { one } else { many })
+}
+
+/// Compact facts for one repository: position against upstream, then local work.
+fn facts(report: &Report, paint: ui::Paint) -> Vec<String> {
+    let mut facts = Vec::new();
+    match report.state.as_str() {
+        "ahead" | "behind" | "diverged" | "synced" => {
+            if report.ahead > 0 {
+                facts.push(paint.paint(ui::PUSH, format!("↑{}", report.ahead)));
+            }
+            if report.behind > 0 {
+                facts.push(paint.paint(ui::INFO, format!("↓{}", report.behind)));
+            }
+        }
+        "no-remote" => facts.push(paint.paint(ui::WARN, "no remote")),
+        "no-upstream" => facts.push(paint.paint(ui::WARN, "no upstream")),
+        "detached" => facts.push(paint.paint(ui::WARN, "detached HEAD")),
+        "fetch-failed" => facts.push(paint.paint(ui::BAD, "fetch failed")),
+        "inspection-failed" => facts.push(paint.paint(ui::BAD, "unreadable")),
+        other => facts.push(ui::visible(other)),
+    }
+    if report.dirty.staged > 0 {
+        facts.push(paint.paint(ui::GOOD, format!("{} staged", report.dirty.staged)));
+    }
+    if report.dirty.unstaged > 0 {
+        facts.push(paint.paint(ui::WARN, format!("{} modified", report.dirty.unstaged)));
+    }
+    if report.dirty.untracked > 0 {
+        facts.push(format!("{} untracked", report.dirty.untracked));
+    }
+    if report.stashes > 0 {
+        facts.push(plural(report.stashes, "stash", "stashes"));
+    }
+    facts
+}
+
+/// The reason, when it adds something the facts and heading do not already say.
+fn hint(report: &Report) -> Option<String> {
+    if report.applied {
+        return Some(match &report.plan {
+            Some(Plan {
+                branch: Some(branch),
+                ..
+            }) => format!("merged; switched to {branch}"),
+            _ => "fast-forwarded".into(),
+        });
+    }
+    match report.reason.as_str() {
+        ""
+        | "up to date"
+        | "fast-forward current branch"
+        | "working tree has local changes"
+        | "no remote configured"
+        | "review branch, upstream and stashes manually"
+        | "local commits; push manually when ready" => None,
+        reason => Some(ui::visible(reason)),
+    }
+}
+
+/// Healthy checkouts are summarised by owner so attention goes where it is needed.
+fn clean_summary(
+    out: &mut String,
+    members: &[usize],
+    names: &[String],
+    columns: usize,
+    paint: ui::Paint,
+) {
+    let mut owners: Vec<(String, Vec<String>)> = Vec::new();
+    for name in members.iter().filter_map(|index| names.get(*index)) {
+        let (owner, leaf) = name.rsplit_once('/').map_or_else(
+            || (String::new(), name.clone()),
+            |(owner, leaf)| (format!("{owner}/"), leaf.to_owned()),
+        );
+        match owners.last_mut() {
+            Some((last, leaves)) if *last == owner => leaves.push(leaf),
+            _ => owners.push((owner, vec![leaf])),
+        }
+    }
+    for (owner, leaves) in owners {
+        let indent = 3_usize.saturating_add(ui::width(&owner));
+        let mut line = format!("   {}", paint.paint(ui::DIM, &owner));
+        let mut length = indent;
+        for (position, leaf) in leaves.iter().enumerate() {
+            if position > 0 {
+                if length.saturating_add(ui::width(leaf)).saturating_add(2) > columns {
+                    let _ = writeln!(out, "{line}");
+                    line = " ".repeat(indent);
+                    length = indent;
+                } else {
+                    line.push_str("  ");
+                    length = length.saturating_add(2);
+                }
+            }
+            line.push_str(leaf);
+            length = length.saturating_add(ui::width(leaf));
+        }
+        let _ = writeln!(out, "{line}");
+    }
+    out.push('\n');
+}
+
+/// Timing, the source of the data, and the one next step worth taking.
+fn footer(out: &mut String, reports: &[Report], view: &View<'_>, paint: ui::Paint) {
+    let count = |group: Group| {
+        reports
+            .iter()
+            .filter(|report| Group::of(report) == group)
+            .count()
+    };
+    let seconds = view.elapsed.as_secs_f64();
+    let action = match view.mode {
+        Mode::Status => "fetched",
+        Mode::Cached | Mode::SyncPlan => "inspected",
+        Mode::Sync => "synced",
+    };
+    let mut summary = format!(
+        " {} {action} in {seconds:.1}s",
+        plural(reports.len(), "repository", "repositories")
+    );
+    if matches!(view.mode, Mode::Cached | Mode::SyncPlan) {
+        summary.push_str(" from cached remote refs");
+    }
+    let _ = writeln!(out, "{}", paint.paint(ui::DIM, summary));
+    let pending = count(Group::Update);
+    let next = match view.mode {
+        Mode::Status | Mode::Cached if pending > 0 => Some(format!(
+            "run {} to update {}",
+            paint.paint(ui::BOLD, "repot sync"),
+            plural(pending, "repository", "repositories")
+        )),
+        Mode::SyncPlan if pending > 0 => Some(format!(
+            "run {} to apply",
+            paint.paint(ui::BOLD, "repot sync")
+        )),
+        _ if count(Group::Failed) > 0 => Some("failed checkouts were left untouched".to_owned()),
+        _ if reports.is_empty() => Some(format!(
+            "clone one with {}",
+            paint.paint(ui::BOLD, "repot clone owner/name")
+        )),
+        _ => None,
+    };
+    if let Some(next) = next {
+        let _ = writeln!(out, " {} {next}", paint.paint(ui::INFO, "→"));
+    }
+}
+
+fn terminal_report(reports: &[Report], view: &View<'_>) -> String {
+    let paint = ui::Paint::stdout();
+    let columns = ui::terminal_width();
+    let names: Vec<String> = reports
+        .iter()
+        .map(|report| ui::repository_name(&report.path, view.roots))
+        .collect();
+    let branches: Vec<String> = reports
+        .iter()
+        .map(|report| {
+            report
+                .branch
+                .as_deref()
+                .map_or_else(|| "—".to_owned(), ui::visible)
         })
-        .collect()
+        .collect();
+    let listed = |report: &&Report| Group::of(report) != Group::Clean;
+    let name_width = reports
+        .iter()
+        .zip(&names)
+        .filter(|(report, _)| listed(report))
+        .map(|(_, name)| ui::width(name))
+        .max()
+        .unwrap_or_default()
+        .min(columns / 3);
+    let branch_width = reports
+        .iter()
+        .zip(&branches)
+        .filter(|(report, _)| listed(report))
+        .map(|(_, branch)| ui::width(branch))
+        .max()
+        .unwrap_or_default()
+        .min(18);
+    let mut out = String::from("\n");
+    let mut groups: Vec<Group> = reports.iter().map(Group::of).collect();
+    groups.sort_unstable();
+    groups.dedup();
+    for group in groups {
+        let members: Vec<usize> = (0..reports.len())
+            .filter(|index| {
+                reports
+                    .get(*index)
+                    .is_some_and(|report| Group::of(report) == group)
+            })
+            .collect();
+        let (symbol, title, style) = group.heading(view.mode);
+        let _ = writeln!(
+            out,
+            " {} {}  {}",
+            paint.paint(style.bold(), symbol),
+            paint.paint(ui::BOLD, title),
+            paint.paint(ui::DIM, members.len())
+        );
+        if group == Group::Clean {
+            clean_summary(&mut out, &members, &names, columns, paint);
+            continue;
+        }
+        for index in members {
+            let (Some(report), Some(name), Some(branch)) =
+                (reports.get(index), names.get(index), branches.get(index))
+            else {
+                continue;
+            };
+            let name = ui::pad(&ui::truncate(name, name_width), name_width);
+            let branch = ui::pad(&ui::truncate(branch, branch_width), branch_width);
+            let facts = facts(report, paint).join(&paint.paint(ui::DIM, " · "));
+            let mut line = format!(
+                "   {}  {}  {}",
+                paint.paint(ui::BOLD, name),
+                paint.paint(ui::DIM, branch),
+                facts
+            );
+            if let Some(hint) = hint(report) {
+                let _ = write!(line, "  {}", paint.paint(ui::DIM, format!("· {hint}")));
+            }
+            let _ = writeln!(out, "{}", line.trim_end());
+        }
+        out.push('\n');
+    }
+    footer(&mut out, reports, view, paint);
+    out
 }
 
 pub fn probe(path: &Path, args: &[&str], timeout: Duration) -> Result<Option<String>> {

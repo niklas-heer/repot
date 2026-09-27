@@ -37,6 +37,12 @@ pub fn help(path: &[String], mut command: Command) -> Result<()> {
             .find_subcommand_mut(name)
             .ok_or_else(|| format!("unknown command {name:?}"))?;
     }
-    writeln!(io::stdout().lock(), "{}", current.render_long_help())
+    let help = current.render_long_help();
+    let text = if crate::ui::Paint::stdout().colour() {
+        help.ansi().to_string()
+    } else {
+        help.to_string()
+    };
+    writeln!(io::stdout().lock(), "{}", text.trim_end())
         .map_err(|error| format!("cannot print help: {error}"))
 }

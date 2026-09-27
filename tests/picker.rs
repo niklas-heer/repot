@@ -111,6 +111,8 @@ mod tests {
                 writer,
                 receiver,
                 output: Vec::new(),
+                stream: Vec::new(),
+                answered: 0,
             }
         }
     }
@@ -122,9 +124,27 @@ mod tests {
         writer: Box<dyn Write + Send>,
         receiver: Receiver<Vec<u8>>,
         output: Vec<u8>,
+        stream: Vec<u8>,
+        answered: usize,
     }
 
     impl Session {
+        /// Answer cursor position queries like a terminal emulator would; the
+        /// inline picker anchors itself where the cursor is.
+        fn record(&mut self, bytes: Vec<u8>) {
+            self.stream.extend(&bytes);
+            self.output.extend(bytes);
+            let queries = self
+                .stream
+                .windows(4)
+                .filter(|window| *window == b"\x1b[6n")
+                .count();
+            while self.answered < queries {
+                self.answered = self.answered.saturating_add(1);
+                self.send(b"\x1b[1;1R");
+            }
+        }
+
         fn until(&mut self, needle: &[u8]) {
             let deadline = Instant::now()
                 .checked_add(Duration::from_secs(15))
@@ -136,7 +156,7 @@ mod tests {
             {
                 let timeout = deadline.saturating_duration_since(Instant::now());
                 match self.receiver.recv_timeout(timeout) {
-                    Ok(bytes) => self.output.extend(bytes),
+                    Ok(bytes) => self.record(bytes),
                     Err(error) => panic!(
                         "terminal did not show {:?}: {error}; output: {}",
                         String::from_utf8_lossy(needle),
@@ -161,10 +181,11 @@ mod tests {
             self.until(b"REPOT_TEST_DONE");
             assert!(self.child.wait().expect("shell status").success());
             assert!(
-                self.output
+                !self
+                    .output
                     .windows(8)
-                    .any(|window| window == b"\x1b[?1049l"),
-                "alternate screen restored"
+                    .any(|window| window == b"\x1b[?1049h"),
+                "the picker stays inline instead of taking over the screen"
             );
         }
     }
@@ -265,7 +286,7 @@ mod tests {
         fixture.repo("host/owner/alpha");
         let wanted = fixture.repo("host/owner/beta");
         let mut terminal = fixture.terminal("bash", "\nstty -g > before\nrepot jump > result 2> errors\nstty -g > after\nprintf REPOT_TEST_DONE\n", false);
-        terminal.until(b"Search");
+        terminal.until(b"esc cancel");
         terminal.send(b"beta\r");
         terminal.finish();
         assert_eq!(
@@ -291,7 +312,7 @@ mod tests {
             fixture.repo("beta");
             fs::write(fixture.home.path().join("handoff"), "untouched").expect("sentinel");
             let mut terminal = fixture.terminal("bash", "\nstty -g > before\nREPOT_CD_FILE=handoff repot jump > output 2> errors\nprintf '%s' \"$?\" > status\nstty -g > after\nprintf REPOT_TEST_DONE\n", false);
-            terminal.until(b"Search");
+            terminal.until(b"esc cancel");
             terminal.send(cancel);
             terminal.finish();
             assert_eq!(
@@ -319,7 +340,7 @@ mod tests {
             "\nrepot jump no-match > result\nprintf REPOT_TEST_DONE\n",
             false,
         );
-        terminal.until(b"matches.");
+        terminal.until(b"no matches");
         terminal
             .master
             .resize(PtySize {
@@ -329,7 +350,7 @@ mod tests {
                 pixel_height: 0,
             })
             .expect("shrink PTY");
-        terminal.until(b"Resize");
+        terminal.until(b"esc cancel");
         terminal.output.clear();
         terminal
             .master
@@ -340,7 +361,7 @@ mod tests {
                 pixel_height: 0,
             })
             .expect("grow PTY");
-        terminal.until(b"Search");
+        terminal.until(b"esc cancel");
         terminal.send(b"\x15beta\r");
         terminal.finish();
         assert_eq!(
@@ -359,7 +380,7 @@ mod tests {
             "\nrepot jump no-match > result\nprintf REPOT_TEST_DONE\n",
             false,
         );
-        terminal.until(b"matches.");
+        terminal.until(b"no matches");
         for _ in 0..16 {
             terminal.output.clear();
             terminal
@@ -371,7 +392,7 @@ mod tests {
                     pixel_height: 0,
                 })
                 .expect("shrink PTY");
-            terminal.until(b"Resize");
+            terminal.until(b"esc cancel");
             terminal.output.clear();
             terminal
                 .master
@@ -385,12 +406,11 @@ mod tests {
             // Queue the whole edit alongside SIGWINCH, without waiting for the
             // resize event to drain or resending input to wake a stuck reader.
             terminal.send(b"\x15beta");
-            // The query cursor is emitted after rendering: at width 120 the
-            // centered panel starts in column 6, and beta ends in column 11.
-            terminal.until(b"\x1b[4;11H");
+            // Only a query matching beta renders it as a result.
+            terminal.until(b"beta");
             terminal.output.clear();
             terminal.send(b"\x15no-match");
-            terminal.until(b"\x1b[4;15H");
+            terminal.until(b"no matches");
         }
         terminal.send(b"\x15beta\r");
         terminal.finish();
@@ -410,7 +430,7 @@ mod tests {
             fixture.repo("alpha");
             fixture.repo("beta");
             let mut terminal = fixture.terminal("bash", "\nstty -g > before\nsh -c 'stty -g > before; echo $$ > pid; exec repot jump > result 2> errors'\nstty -g > after\nprintf REPOT_TEST_DONE\n", false);
-            terminal.until(b"Search");
+            terminal.until(b"esc cancel");
             let pid = fs::read_to_string(fixture.home.path().join("pid"))
                 .expect("picker PID")
                 .trim()
@@ -437,9 +457,8 @@ mod tests {
         fixture.repo("alpha");
         let wanted = fixture.repo("beta");
         let mut terminal = fixture.terminal("bash", "\nstty -g > before\nsh -c 'stty -g > before; echo $$ > pid; exec repot jump > result 2> errors'\nstty -g > after\nprintf REPOT_TEST_DONE\n", false);
-        terminal.until(b"Search");
+        terminal.until(b"esc cancel");
         terminal.send(b"beta\x1a");
-        terminal.until(b"\x1b[?1049l");
         let pid = fs::read_to_string(fixture.home.path().join("pid")).expect("picker PID");
         let deadline = Instant::now()
             .checked_add(Duration::from_secs(5))
@@ -464,7 +483,7 @@ mod tests {
         .expect("resume picker");
         // Wait for a fresh frame so Enter cannot race restoration of raw mode.
         terminal.output.clear();
-        terminal.until(b"Search");
+        terminal.until(b"esc cancel");
         terminal.send(b"\r");
         terminal.finish();
         assert_eq!(
@@ -494,7 +513,7 @@ mod tests {
             }
         };
         let mut terminal = fixture.terminal(shell, body, true);
-        terminal.until(b"Search");
+        terminal.until(b"esc cancel");
         terminal.send(b"beta\r");
         terminal.finish();
         assert_eq!(
@@ -541,9 +560,9 @@ mod tests {
         terminal.until(b"REPOT_TEST_DONE");
         assert!(terminal.child.wait().expect("shell status").success());
         let output = String::from_utf8_lossy(&terminal.output);
-        assert!(output.contains("ACTION"));
-        assert!(output.contains("BRANCH"));
-        assert!(output.contains("need attention"));
+        assert!(output.contains("Needs review"));
+        assert!(output.contains("no remote"));
+        assert!(output.contains("1 repository inspected"));
         assert!(output.contains("newline\\nname"));
         assert!(!output.contains('\u{1b}'));
     }

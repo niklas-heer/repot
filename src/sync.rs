@@ -3,8 +3,10 @@
 use crate::Result;
 use crate::config::Config;
 use crate::status::{self, Options, Report};
+use crate::ui;
 
 pub fn run(config: &Config, options: &Options, dry_run: bool) -> Result<u8> {
+    let started = std::time::Instant::now();
     let effective = Options {
         json: options.json,
         jobs: options.jobs,
@@ -12,17 +14,53 @@ pub fn run(config: &Config, options: &Options, dry_run: bool) -> Result<u8> {
         no_fetch: options.no_fetch || dry_run,
     };
     if dry_run {
-        eprintln!("repot: dry-run uses cached remote refs; no fetch or checkout changes");
+        ui::note(
+            "·",
+            ui::DIM,
+            "dry run: planning from cached remote refs; nothing is fetched or changed",
+        );
     }
-    let mut reports = status::collect(config, &effective)?;
-    if !dry_run {
-        for report in &mut reports {
-            if report.plan.is_some() && apply(&effective, report).is_err() {
-                report.fail("update refused or failed; repository preserved for manual review");
+    let reports = {
+        let progress = (!options.json).then(|| ui::Progress::start("Fetching", 0));
+        let mut reports = status::collect(config, &effective, progress.as_ref())?;
+        if !dry_run {
+            let planned = reports
+                .iter()
+                .filter(|report| report.plan.is_some())
+                .count();
+            if let Some(progress) = &progress {
+                progress.phase("Updating", planned);
+            }
+            for report in &mut reports {
+                if report.plan.is_none() {
+                    continue;
+                }
+                if let Some(progress) = &progress {
+                    progress.working_on(&ui::repository_name(&report.path, &config.roots));
+                }
+                if apply(&effective, report).is_err() {
+                    report.fail("update refused or failed; repository preserved for manual review");
+                }
+                if let Some(progress) = &progress {
+                    progress.advance();
+                }
             }
         }
-    }
-    status::render(&reports, options.json)
+        reports
+    };
+    status::render(
+        &reports,
+        options.json,
+        &status::View {
+            roots: &config.roots,
+            mode: if dry_run {
+                status::Mode::SyncPlan
+            } else {
+                status::Mode::Sync
+            },
+            elapsed: started.elapsed(),
+        },
+    )
 }
 
 pub fn apply(options: &Options, report: &mut Report) -> Result<()> {

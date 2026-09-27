@@ -16,18 +16,25 @@ use crate::config::{Config, remote_parts};
     reason = "independent ghq-compatible CLI switches"
 )]
 pub struct ListOptions {
+    /// Show only repositories whose path contains this text.
     pub query: Option<String>,
+    /// Print machine-readable results.
     #[arg(long)]
     pub json: bool,
+    /// Print absolute paths instead of paths relative to the root.
     #[arg(short = 'p', long)]
     pub full_path: bool,
+    /// Match the query against the whole name exactly.
     #[arg(short = 'e', long)]
     pub exact: bool,
+    /// Print the shortest unique name for each repository.
     #[arg(long)]
     pub unique: bool,
+    /// List bare repositories too.
     #[arg(long)]
     pub bare: bool,
-    #[arg(long)]
+    /// Version control system; only git is supported.
+    #[arg(long, hide = true)]
     pub vcs: Option<String>,
 }
 

@@ -15,7 +15,7 @@
 ---
 
 repot gives your repositories a home: `<root>/<host>/<owner>/<repo>`. Clone a
-project, jump to it with the built-in fuzzy picker, and safely bring your
+project, `repot cd` to it with the built-in fuzzy picker, and safely bring your
 checkouts up to date. Start an experiment locally, publish it when it's ready,
 and restore the projects you care about on your next machine.
 
@@ -60,18 +60,18 @@ Add the line for your shell to its configuration, then reload it:
 | Fish | `repot shell-init fish \| source` in `~/.config/fish/config.fish` |
 | Nushell | Save `repot shell-init nu` to a file and source it from `config.nu`; [instructions](docs/install.md#nushell). |
 
-The wrapper lets `jump`, `new` and other relocation commands change your shell's
+The wrapper lets `cd`, `new` and other relocation commands change your shell's
 directory. Without it, repot prints the selected path. Completions are available
 for all four shells with `repot completions <shell>`.
 
 ## Quick start
 
 ```sh
-repot get niklas-heer/repot     # clone into your repository tree
-repot jump repot               # enter the checkout
-repot status                  # fetch and see what needs attention
+repot clone niklas-heer/repot   # clone into your repository tree
+repot cd repot                 # enter the checkout
+repot status                   # fetch and see what needs attention
 repot sync --dry-run           # preview using cached remote refs
-repot sync                    # fetch and apply safe updates
+repot sync                     # fetch and apply safe updates
 ```
 
 The default root is `~/ghq`. Existing `GHQ_ROOT` and Git `ghq.root` settings take
@@ -82,21 +82,27 @@ precedence. Run `repot root` to see yours.
 ### Find a project and get back to work
 
 ```sh
-repot jump                    # open the fuzzy picker
-repot jump project            # jump directly when the match is unique
+repot cd                      # open the inline fuzzy picker
+repot cd project              # jump directly when the match is unique
 repot list -p                 # print full paths for scripts
 ```
 
-Type to filter; use arrows or <kbd>Ctrl</kbd>+<kbd>N</kbd>/<kbd>P</kbd> to select,
-<kbd>Enter</kbd> to jump, and <kbd>Esc</kbd> to cancel. The picker includes registered
-repositories outside the tree, such as your dotfiles.
+The picker opens right under your prompt instead of taking over the screen, so
+whatever you were looking at stays visible. Type to filter; use arrows or
+<kbd>Ctrl</kbd>+<kbd>N</kbd>/<kbd>P</kbd> to select, <kbd>Enter</kbd> to go, and
+<kbd>Esc</kbd> to cancel. It includes registered repositories outside the tree,
+such as your dotfiles.
 
 ### Keep your checkouts current
 
 ```sh
-repot status --json
-repot sync --jobs 4 --timeout 30
+repot status                  # grouped report with live progress
+repot status --json           # stable output for scripts
+repot sync --jobs 8 --timeout 30
 ```
+
+`status` groups checkouts by what they need (review, push, update) and
+summarises the healthy ones, then suggests the next step.
 
 Sync fast-forwards clean branches and returns safely merged feature branches to
 the remote's default branch when it can prove their work is preserved. Squash and
@@ -121,7 +127,7 @@ explains prerequisites and `--resume`.
 ### Bring in strays or restore a machine
 
 ```sh
-repot find ~/Projects
+repot scan ~/Projects
 repot adopt ~/Downloads/project --dry-run
 repot adopt ~/.local/share/chezmoi --register   # keep this checkout in place
 repot restore --dry-run

@@ -38,9 +38,10 @@ mod tests {
             );
             let text = String::from_utf8(output.stdout).expect("completion UTF-8");
             for command in [
-                "get",
-                "create",
-                "jump",
+                "clone",
+                "new",
+                "cd",
+                "scan",
                 "trash",
                 "publish",
                 "completions",

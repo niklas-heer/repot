@@ -21,7 +21,7 @@ TOML, KDL v2 and YAML are supported. Root settings and manifest entries determin
 the scope of bulk operations: changing the current directory does not restrict
 `status`, `sync` or `restore` to that checkout.
 
-For current remote information, use `repot status --json --jobs 4 --timeout 30`.
+For current remote information, use `repot status --json --jobs 8 --timeout 30`.
 It fetches and updates remote-tracking refs, although it does not update working
 files. Use this only when network access and fetching are within the task's scope.
 
@@ -33,19 +33,19 @@ files. Use this only when network access and fetching are within the task's scop
 | Inspect cached state | `status --no-fetch --json` | No fetch; observations may be stale. |
 | Preview safe updates | `sync --dry-run --json` | Uses cached refs; never fetches or applies a plan. |
 | Apply safe updates | `sync --json` | Fetches, revalidates and applies eligible updates across configured checkouts. |
-| Clone a project | `get URL --json` | Stages privately; supports `--dry-run`, `--timeout` and explicit `--vcs git`. |
-| Find unregistered checkouts | `find DIRECTORY --json` | Searches the supplied directory without registering anything. |
+| Clone a project | `clone URL --json` | Stages privately; supports `--dry-run`, `--timeout` and explicit `--vcs git`. `get` is an alias. |
+| Find unregistered checkouts | `scan DIRECTORY --json` | Searches the supplied directory without registering anything. `find` is an alias. |
 | Register without relocating | `adopt PATH --register --json` | Writes the selected manifest; supports `--dry-run`. |
 | Move and register | `adopt PATH --json` | Preserves local files; refuses conflicting destinations; supports `--dry-run`. |
 | Restore a manifest | `restore --json` | Clones missing entries and skips every occupied destination; supports `--dry-run`. |
-| Start an experiment | `new NAME` | Creates a local Git checkout with no remote or commit; supports `--dry-run`. |
+| Start an experiment | `new NAME` | Creates a local Git checkout with no remote or commit; supports `--dry-run`. `new OWNER/NAME` creates an empty repository at its tree location instead. |
 | Publish a checkout | `publish OWNER/REPO --visibility VISIBILITY` | Creates a remote, pushes the inspected commit and relocates the checkout; requires authorization for those effects. |
 | Archive a checkout | `rm QUERY --json` | Removes it from the active tree into a recoverable archive; supports `--dry-run`. |
 | Inspect archives | `trash list --json` | Returns archive IDs and original paths. |
 | Recover an archive | `trash restore ID --dry-run` | Preview first; omit `--dry-run` to restore to an unoccupied destination. |
 
-Not every command has `--json`; check its help before adding flags. `jump` without
-an unambiguous query opens an interactive terminal picker. Avoid that in unattended
+Not every command has `--json`; check its help before adding flags. `cd` (alias `jump`)
+without an unambiguous query opens an interactive terminal picker. Avoid that in unattended
 runs. The CLI cannot change a parent process's directory; the shell wrappers are
 for interactive use.
 
@@ -120,7 +120,7 @@ sync, the original `state` and counts are retained with `applied: true`. Run
 
 ### Other reports
 
-`get`, `find`, `adopt`, `migrate` and `restore` JSON arrays contain `path`, `action`
+`clone`, `scan`, `adopt`, `migrate` and `restore` JSON arrays contain `path`, `action`
 and `reason`. Archive removal/listing reports contain `id`, `path` and `action`.
 Use the returned archive ID for recovery. These action sets are command-specific;
 do not interpret a clone or archive action as a status action.
@@ -199,8 +199,8 @@ The server exposes these typed tools:
 
 | Group | Tools |
 | --- | --- |
-| Orientation | `guide`, `roots`, `list`, `find` |
-| Inspection and updates | `status`, `sync`, `get` |
+| Orientation | `guide`, `roots`, `list`, `find` (CLI `scan`) |
+| Inspection and updates | `status`, `sync`, `get` (CLI `clone`) |
 | Local organisation | `new`, `create`, `adopt`, `migrate`, `restore` |
 | Recovery | `archive`, `trash_list`, `trash_restore` |
 | Publication | `publish` |

@@ -29,7 +29,7 @@ pub fn new_project(config: &Config, name: &str, namespace: &str, dry_run: bool) 
         &["init", "--template=", "--initial-branch=main"],
     )?;
     rename_new(staging.path(), &target)?;
-    eprintln!("created {}", target.display());
+    crate::ui::done(&format!("created scratch project {}", target.display()));
     navigation::handoff(&target.canonicalize().map_err(|error| error.to_string())?)
 }
 
@@ -176,7 +176,7 @@ pub fn move_checkout(source: &Path, destination: &Path) -> Result<()> {
     let parent = destination.parent().ok_or("destination has no parent")?;
     fs::create_dir_all(parent).map_err(|error| format!("create destination parent: {error}"))?;
     rename_new(source, destination)?;
-    eprintln!("moved to {}", destination.display());
+    crate::ui::done(&format!("moved to {}", destination.display()));
     Ok(())
 }
 

@@ -13,7 +13,7 @@ use serde::Serialize;
 use crate::Result;
 use crate::config::Config;
 use crate::remote_spec::{self, Spec};
-use crate::{lifecycle, navigation, process, status, sync};
+use crate::{lifecycle, navigation, process, status, sync, ui};
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum Partial {
@@ -29,47 +29,64 @@ pub enum Partial {
 pub struct Options {
     /// URL, host/owner/repo, owner/repo or repo; read newline-separated stdin if omitted.
     pub repositories: Vec<String>,
+    /// Fast-forward checkouts that already exist, when that is safe.
     #[arg(short, long)]
     pub update: bool,
     /// Use SSH instead of HTTPS.
     #[arg(short = 'p', long = "ssh", visible_alias = "p")]
     pub ssh: bool,
+    /// Clone only the latest commit.
     #[arg(long)]
     pub shallow: bool,
     /// Enter the first checkout through the shell wrapper.
     #[arg(short = 'l', long)]
     pub look: bool,
-    #[arg(long)]
+    /// Version control system; only git is supported.
+    #[arg(long, hide = true)]
     pub vcs: Option<String>,
+    /// Print nothing on success.
     #[arg(short = 's', long)]
     pub silent: bool,
+    /// Do not clone submodules.
     #[arg(long)]
     pub no_recursive: bool,
+    /// Check out this branch instead of the remote default.
     #[arg(short = 'b', long)]
     pub branch: Option<String>,
+    /// Clone several repositories at once.
     #[arg(short = 'P', long)]
     pub parallel: bool,
+    /// Maximum concurrent clones with --parallel.
     #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u8).range(1..=32))]
     pub jobs: u8,
+    /// Create a bare repository without a working tree.
     #[arg(long)]
     pub bare: bool,
+    /// Fetch file contents or trees on demand instead of up front.
     #[arg(long, value_enum)]
     pub partial: Option<Partial>,
+    /// Show what would be cloned without changing anything.
     #[arg(long)]
     pub dry_run: bool,
+    /// Print machine-readable results.
     #[arg(long)]
     pub json: bool,
+    /// Maximum duration of each Git subprocess, in seconds.
     #[arg(long, default_value_t = 120, value_parser = clap::value_parser!(u64).range(1..=3600))]
     pub timeout: u64,
 }
 
 #[derive(Debug, Args)]
 pub struct CreateOptions {
+    /// Repository location: owner/name, host/owner/name or a URL.
     pub repository: String,
-    #[arg(long)]
+    /// Version control system; only git is supported.
+    #[arg(long, hide = true)]
     pub vcs: Option<String>,
+    /// Create a bare repository without a working tree.
     #[arg(long)]
     pub bare: bool,
+    /// Show where the repository would go without creating it.
     #[arg(long)]
     pub dry_run: bool,
 }
@@ -107,6 +124,17 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
         1
     };
     let size = specs.len().div_ceil(jobs).max(1);
+    let spinner = (!options.json && !options.silent && !specs.is_empty()).then(|| {
+        ui::Progress::start(
+            if options.dry_run {
+                "Checking"
+            } else {
+                "Cloning"
+            },
+            specs.len(),
+        )
+    });
+    let progress = spinner.as_ref();
     let reports = std::thread::scope(|scope| {
         let handles: Vec<_> = specs
             .chunks(size)
@@ -115,12 +143,21 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
                     chunk
                         .iter()
                         .map(|spec| {
-                            get(config, spec, options, true).unwrap_or_else(|reason| Report {
-                                path: spec.path.clone(),
-                                action: "failed".into(),
-                                reason,
-                                code: 1,
-                            })
+                            if let Some(progress) = progress {
+                                progress
+                                    .working_on(&ui::repository_name(&spec.path, &config.roots));
+                            }
+                            let report =
+                                get(config, spec, options, true).unwrap_or_else(|reason| Report {
+                                    path: spec.path.clone(),
+                                    action: "failed".into(),
+                                    reason,
+                                    code: 1,
+                                });
+                            if let Some(progress) = progress {
+                                progress.advance();
+                            }
+                            report
                         })
                         .collect::<Vec<_>>()
                 })
@@ -132,6 +169,7 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
         }
         Ok::<_, String>(reports)
     })?;
+    drop(spinner);
     let code = if reports.iter().any(|report| report.code == 1) {
         1
     } else if reports.iter().any(|report| report.code == 3) {
@@ -139,26 +177,7 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
     } else {
         0
     };
-    if options.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&reports).map_err(|error| error.to_string())?
-        );
-    } else {
-        for report in &reports {
-            if report.code == 0 {
-                println!("{}", report.path.display());
-            }
-            if !options.silent || report.code != 0 {
-                eprintln!(
-                    "{}: {} ({})",
-                    report.action,
-                    report.path.display(),
-                    report.reason
-                );
-            }
-        }
-    }
+    print_reports(config, options, &reports)?;
     if code == 0
         && options.look
         && !options.dry_run
@@ -168,6 +187,40 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
         navigation::handoff(&first.path)?;
     }
     Ok(code)
+}
+
+/// Paths go to stdout for scripts; a readable line per repository goes to stderr.
+fn print_reports(config: &Config, options: &Options, reports: &[Report]) -> Result<()> {
+    if options.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(reports).map_err(|error| error.to_string())?
+        );
+        return Ok(());
+    }
+    for report in reports {
+        if report.code == 0 {
+            println!("{}", report.path.display());
+        }
+        if !options.silent || report.code != 0 {
+            let (symbol, style) = match report.code {
+                0 => ("✓", ui::GOOD),
+                3 => ("●", ui::WARN),
+                _ => ("✗", ui::BAD),
+            };
+            ui::note(
+                symbol,
+                style,
+                &format!(
+                    "{} {} {}",
+                    report.action,
+                    ui::repository_name(&report.path, &config.roots),
+                    ui::Paint::stderr().paint(ui::DIM, format!("· {}", report.reason))
+                ),
+            );
+        }
+    }
+    Ok(())
 }
 
 fn inputs(options: &Options) -> Result<Vec<String>> {

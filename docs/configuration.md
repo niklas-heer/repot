@@ -119,7 +119,7 @@ home-relative paths when possible. Never place credentials in a URL or manifest.
 
 ## Editing and dotfiles
 
-You can edit any of the three formats by hand. `adopt` and `migrate` register repositories
+You can edit any of the three formats by hand. `adopt` (and its ghq-style twin `migrate`) register repositories
 while preserving existing comments. A symlinked manifest is updated at its
 dotfiles target without replacing the symlink. A persistent companion `.lock`
 file serializes concurrent registrations; updates re-read and atomically replace

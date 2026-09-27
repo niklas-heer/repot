@@ -3,14 +3,14 @@
 use std::env;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::Result;
 use crate::discovery::Repository;
 
 mod picker;
 
-pub fn jump(repositories: &[Repository], query: Option<&str>) -> Result<()> {
+pub fn jump(repositories: &[Repository], roots: &[PathBuf], query: Option<&str>) -> Result<()> {
     let query = query.unwrap_or_default();
     let exact: Vec<_> = repositories
         .iter()
@@ -44,7 +44,7 @@ pub fn jump(repositories: &[Repository], query: Option<&str>) -> Result<()> {
     match candidates.as_slice() {
         [repo] => handoff(&repo.path),
         _ if io::stdin().is_terminal() && !repositories.is_empty() => {
-            let selected = picker::pick(repositories, query)?;
+            let selected = picker::pick(repositories, roots, query)?;
             handoff(&selected)
         }
         [] => Err("no repositories match; use `repot list` to see known repositories".into()),
@@ -134,20 +134,22 @@ const FISH_INIT: &str = r#"function repot
 end
 "#;
 
-const NU_INIT: &str = r"# Run repot and follow its directory handoff after a successful command.
-def --env --wrapped repot [...args: string]: nothing -> nothing {
-    let repot_cd_file = (^mktemp -t repot-cd.XXXXXXXX | str trim)
-    if $env.LAST_EXIT_CODE != 0 { error make {msg: 'Cannot create repot handoff file'} }
-    let repot_result = (try {
-        with-env {REPOT_CD_FILE: $repot_cd_file} {
-            ^repot ...$args | tee { print -n } | tee --stderr { print -e -n } | complete
+const NU_INIT: &str = r"# repot shell integration: lets `repot cd`, `new`, `clone` and friends change directory.
+def --env --wrapped repot [...args: string] {
+    let command = ($args | where {|arg| not ($arg | str starts-with '-') } | get 0? | default '')
+    if $command in [list ls root status sync scan find restore completions shell-init mcp agent-guide help h] {
+        # Reports stay attached to the terminal and remain pipeable, e.g. `repot status --json | from json`.
+        ^repot ...$args
+    } else {
+        let repot_cd_file = (^mktemp -t repot-cd.XXXXXXXX | str trim)
+        try { with-env {REPOT_CD_FILE: $repot_cd_file} { ^repot ...$args } } catch { }
+        let repot_status = $env.LAST_EXIT_CODE
+        let repot_destination = (try { open --raw $repot_cd_file } catch { '' })
+        rm -f $repot_cd_file
+        if $repot_status == 0 and ($repot_destination | is-not-empty) and ($repot_destination | path type) == 'dir' {
+            cd $'($repot_destination)/.'
         }
-    } catch {|err| print -e $err.msg; {exit_code: 127} })
-    let repot_destination = (try { open --raw $repot_cd_file } catch { '' })
-    rm -f $repot_cd_file
-    if $repot_result.exit_code == 0 and ($repot_destination | is-not-empty) and ($repot_destination | path type) == 'dir' {
-        cd $'($repot_destination)/.'
+        $env.LAST_EXIT_CODE = $repot_status
     }
-    $env.LAST_EXIT_CODE = $repot_result.exit_code
 }
 ";

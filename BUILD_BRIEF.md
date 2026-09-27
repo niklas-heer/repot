@@ -38,26 +38,27 @@ These are product requirements, not implementation details. See the decision rec
 
 The implemented command reference and options are in [README.md](README.md) and `repot --help`.
 
+Commands are named for what a newcomer wants to do; ghq-style names remain as
+aliases (`jump`, `get`, `find`) or hidden commands (`create`, `migrate`).
+
 | Command | Purpose |
 | --- | --- |
-| `repot agent-guide` | Print bundled automation guidance, examples and safety rules |
-| `repot mcp` | Serve typed repository tools to agents over standard input/output |
-| `repot get` / `repot clone` | Clone/import repositories; update existing checkouts safely |
-| `repot root [--all]` | Show primary or all repository roots |
+| `repot cd [query]` | Jump to a repository; inline fuzzy picker, used through the shell wrapper below |
 | `repot list [--json]` | Every known repository: tree, registered extras, scratch projects |
-| `repot jump [query]` | Fuzzy pick; used through the shell wrapper below |
+| `repot root [--all]` | Show primary or all repository roots |
 | `repot status [--json]` | One state and one recommended action per repository, after a parallel fetch |
 | `repot sync [--dry-run]` | Fast-forward what is safe and return merged branches to the default branch |
-| `repot new <name>` | Local project without a remote |
-| `repot create <repository>` | Initialize an empty Git repository at its tree location |
+| `repot clone` | Clone/import repositories; update existing checkouts safely |
+| `repot new <name>` | Local project without a remote; `owner/name` initializes an empty repository at its tree location |
 | `repot publish` | Create the remote, push, and move the checkout into the tree |
-| `repot find [path]` | Search for repositories outside the tree |
+| `repot scan [path]` | Search for repositories outside the tree |
 | `repot adopt <path>` | Move a stray into the tree, or register it in place |
-| `repot migrate <path>` | Migrate and register an existing checkout |
-| `repot rm` / `repot trash` | Remove from active tree into a recoverable archive; restore explicitly |
 | `repot restore [--dry-run]` | Clone everything listed in the manifest that is missing |
+| `repot rm` / `repot trash` | Remove from active tree into a recoverable archive; restore explicitly |
 | `repot shell-init <nu\|zsh\|bash\|fish>` | Print the shell integration |
 | `repot completions <nu\|zsh\|bash\|fish>` | Generate shell completions |
+| `repot agent-guide` | Print bundled automation guidance, examples and safety rules |
+| `repot mcp` | Serve typed repository tools to agents over standard input/output |
 
 ### Status model
 
@@ -158,7 +159,13 @@ The delegated implementation resolved the original open questions:
   bounded concurrency, disabled hooks and a transport allowlist. Verified metadata
   reads use gix; authoritative safety checks and mutations remain on Git.
 - Nucleo matching and an embedded Ratatui/Crossterm picker handle navigation.
-  Exact/unique matches select directly. Shell wrappers support bash, zsh, fish and Nushell.
+  The picker renders inline under the prompt rather than on the alternate screen,
+  so navigation never hides the user's scrollback. Exact/unique matches select directly.
+- Human output is designed for terminals and degrades for pipes: `status`/`sync`
+  group checkouts by needed action with a live progress line on stderr, errors
+  carry hints, and help opens with the logo, version and task-grouped commands.
+  Piped text and `--json` stay stable for scripts; `NO_COLOR` and `CLICOLOR_FORCE`
+  are honoured. Shell wrappers support bash, zsh, fish and Nushell.
 - Scratch projects live at `<primary-root>/local/<namespace>/<name>`; the namespace
   defaults to `scratch`.
 - Publishing supports GitHub through gh and GitLab through glab, with explicit

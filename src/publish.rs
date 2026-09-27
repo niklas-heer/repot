@@ -118,8 +118,10 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
         .transpose()?;
     if options.dry_run {
         if !options.resume {
-            eprintln!(
-                "repot: forge authentication checked; remote availability is unconfirmed until creation succeeds"
+            crate::ui::note(
+                "·",
+                crate::ui::DIM,
+                "forge authentication checked; remote availability is unconfirmed until creation succeeds",
             );
         }
         println!(
@@ -184,11 +186,11 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
         ],
     )?;
     lifecycle::move_checkout(&source, &target.destination)?;
-    eprintln!(
+    crate::ui::done(&format!(
         "published {} and moved checkout to {}",
         target.url,
         target.destination.display()
-    );
+    ));
     navigation::handoff(&target.destination)?;
     Ok(0)
 }

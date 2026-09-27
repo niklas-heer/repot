@@ -12,23 +12,30 @@ use crate::{Result, ghq_listing, lifecycle, manifest, navigation, process};
 
 #[derive(Debug, Args)]
 pub struct RemoveOptions {
+    /// Repository to archive: a unique name, owner/name or absolute path.
     pub query: String,
+    /// Look for a bare repository.
     #[arg(long)]
     pub bare: bool,
+    /// Show what would be archived without moving anything.
     #[arg(long)]
     pub dry_run: bool,
+    /// Print machine-readable results.
     #[arg(long)]
     pub json: bool,
 }
 
 #[derive(Debug, Args)]
 pub struct MigrateOptions {
+    /// Checkout to move into the tree.
     pub path: PathBuf,
     /// Compatibility flag: repot migration is already noninteractive.
     #[arg(short = 'y', long, visible_alias = "y")]
     pub yes: bool,
+    /// Show where the checkout would go without moving it.
     #[arg(long)]
     pub dry_run: bool,
+    /// Print machine-readable results.
     #[arg(long)]
     pub json: bool,
 }
@@ -37,12 +44,15 @@ pub struct MigrateOptions {
 pub enum TrashCommand {
     /// Show recoverable checkouts archived by repot rm.
     List {
+        /// Print machine-readable results.
         #[arg(long)]
         json: bool,
     },
     /// Restore an archived checkout to its original vacant location.
     Restore {
+        /// Archive ID shown by `repot trash list`.
         id: String,
+        /// Check the destination without restoring anything.
         #[arg(long)]
         dry_run: bool,
     },
@@ -127,10 +137,10 @@ pub fn remove(config: &Config, options: &RemoveOptions) -> Result<u8> {
         .ok_or("archive has no ID")?
         .to_string_lossy()
         .into_owned();
-    eprintln!(
+    crate::ui::done(&format!(
         "archived at {}; restore with repot trash restore {id}",
         target.display()
-    );
+    ));
     render(
         &[Report {
             id,
@@ -222,7 +232,7 @@ fn restore(config: &Config, id: &str, dry_run: bool) -> Result<u8> {
     fs::remove_dir(directory).map_err(|error| {
         format!("checkout restored but archive directory cleanup failed: {error}")
     })?;
-    eprintln!("restored to {}", metadata.original_path.display());
+    crate::ui::done(&format!("restored to {}", metadata.original_path.display()));
     navigation::handoff(&metadata.original_path)?;
     Ok(0)
 }
