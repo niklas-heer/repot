@@ -11,7 +11,8 @@ use serde::Serialize;
 
 use crate::Result;
 use crate::config::{Config, remote_parts};
-use crate::discovery;
+use crate::discovery::{self, Repository};
+use crate::github;
 use crate::process;
 use crate::ui;
 
@@ -63,6 +64,9 @@ pub struct Report {
     /// The remote the branch tracks, for suggesting exact commands.
     #[serde(skip)]
     pub remote: Option<String>,
+    /// GitHub confirmed the local tracking refs are current; no fetch was needed.
+    #[serde(skip)]
+    pub confirmed: bool,
 }
 
 impl Report {
@@ -81,6 +85,7 @@ impl Report {
             failed: false,
             plan: None,
             remote: None,
+            confirmed: false,
         }
     }
 
@@ -129,6 +134,16 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
     Ok(code)
 }
 
+struct PublishOnExit<'a>(
+    &'a std::sync::OnceLock<std::collections::HashMap<PathBuf, github::Answer>>,
+);
+
+impl Drop for PublishOnExit<'_> {
+    fn drop(&mut self) {
+        let _ = self.0.set(std::collections::HashMap::new());
+    }
+}
+
 /// Runs after each inspection on the same worker, so updates overlap with the
 /// fetches of other repositories instead of waiting for all of them.
 pub type Finish<'a> = &'a (dyn Fn(&mut Report) + Sync);
@@ -150,27 +165,50 @@ pub fn collect(
             repositories.len(),
         );
     }
-    // A shared queue keeps every worker busy even when one remote is slow.
+    // One batched GitHub query tells which checkouts are already current.
+    // Checkouts GitHub cannot answer for go first, so their fetches overlap
+    // with the query; the others wait for its answers.
+    let survey = (!options.no_fetch).then(|| github::Survey::prepare(&repositories, options.jobs));
+    let mut order: Vec<&Repository> = repositories.iter().collect();
+    if let Some(survey) = &survey {
+        order.sort_by_key(|repo| survey.asks_about(&repo.path));
+    }
+    let answers = std::sync::OnceLock::new();
     let next = std::sync::atomic::AtomicUsize::new(0);
     let workers = options.jobs.clamp(1, 32).min(repositories.len().max(1));
     let mut reports = std::thread::scope(|scope| {
+        if let Some(survey) = &survey {
+            let answers = &answers;
+            scope.spawn(move || {
+                // Waiting workers must never hang: whatever happens here, an
+                // answer (possibly empty, meaning "fetch as usual") is published.
+                let _published = PublishOnExit(answers);
+                let _ = answers.set(survey.answer(options.timeout));
+            });
+        }
         let handles: Vec<_> = (0..workers)
             .map(|_| {
                 scope.spawn(|| {
                     let mut reports = Vec::new();
                     while let Some(repo) =
-                        repositories.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+                        order.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
                     {
                         if let Some(progress) = progress {
                             progress.working_on(&ui::repository_name(&repo.path, &config.roots));
                         }
-                        let mut report = inspect(&repo.path, config, options, !options.no_fetch)
-                            .unwrap_or_else(|_| {
-                                let mut report = Report::empty(&repo.path);
-                                report.state = "inspection-failed".into();
-                                report.fail("could not inspect repository; inspect it with git");
-                                report
-                            });
+                        let github = survey
+                            .as_ref()
+                            .filter(|survey| survey.asks_about(&repo.path))
+                            .and_then(|_| answers.wait().get(&repo.path));
+                        let mut report =
+                            inspect(&repo.path, config, options, !options.no_fetch, github)
+                                .unwrap_or_else(|_| {
+                                    let mut report = Report::empty(&repo.path);
+                                    report.state = "inspection-failed".into();
+                                    report
+                                        .fail("could not inspect repository; inspect it with git");
+                                    report
+                                });
                         if let Some(finish) = finish {
                             finish(&mut report);
                         }
@@ -466,6 +504,13 @@ fn footer(out: &mut String, reports: &[Report], view: &View<'_>, paint: ui::Pain
     if matches!(view.mode, Mode::Cached | Mode::SyncPlan) {
         summary.push_str(" from cached remote refs");
     }
+    let confirmed = reports.iter().filter(|report| report.confirmed).count();
+    if confirmed > 0 {
+        let _ = write!(
+            summary,
+            " · {confirmed} confirmed current by GitHub without fetching"
+        );
+    }
     let _ = writeln!(out, "{}", paint.paint(ui::DIM, summary));
     let pending = count(Group::Update);
     let next = match view.mode {
@@ -598,7 +643,40 @@ fn required(path: &Path, args: &[&str], timeout: Duration) -> Result<String> {
     probe(path, args, timeout)?.ok_or_else(|| "Git inspection failed".into())
 }
 
-pub fn inspect(path: &Path, config: &Config, options: &Options, fetch: bool) -> Result<Report> {
+/// Are this checkout's tracking refs exactly what GitHub reports? Only then can
+/// the fetch be skipped: the upstream branch and the default branch must both
+/// exist on GitHub and match, for the remote this inspection uses.
+fn confirmed(
+    path: &Path,
+    remote: &str,
+    github: Option<&github::Answer>,
+    timeout: Duration,
+) -> Result<bool> {
+    let Some(github) = github.filter(|github| github.remote == remote) else {
+        return Ok(false);
+    };
+    let Some(upstream_tip) = &github.upstream_tip else {
+        return Ok(false);
+    };
+    let local = |reference: &str| {
+        probe(
+            path,
+            &["rev-parse", "--verify", "--quiet", reference],
+            timeout,
+        )
+    };
+    Ok(local(&github.tracking)?.as_ref() == Some(upstream_tip)
+        && local(&format!("refs/remotes/{remote}/{}", github.default_branch))?.as_ref()
+            == Some(&github.default_tip))
+}
+
+pub fn inspect(
+    path: &Path,
+    config: &Config,
+    options: &Options,
+    fetch: bool,
+    github: Option<&github::Answer>,
+) -> Result<Report> {
     let timeout = options.timeout;
     let mut report = Report::empty(path);
     report.branch = probe(
@@ -627,7 +705,9 @@ pub fn inspect(path: &Path, config: &Config, options: &Options, fetch: bool) -> 
     }
     let remote = choose_remote(path, report.branch.as_deref(), &remotes, timeout)?;
     report.remote = Some(remote.clone());
+    report.confirmed = fetch && confirmed(path, &remote, github, timeout)?;
     if fetch
+        && !report.confirmed
         && probe(
             path,
             &[
@@ -734,6 +814,7 @@ pub fn inspect(path: &Path, config: &Config, options: &Options, fetch: bool) -> 
         upstream_oid.as_deref(),
         options,
         fetch,
+        github.filter(|github| github.remote == remote),
     )? {
         Return::Plan(plan) => {
             if ignored_collision(path, &plan.target, timeout)? {
@@ -1036,19 +1117,25 @@ fn return_plan(
     upstream_oid: Option<&str>,
     options: &Options,
     fetch: bool,
+    github: Option<&github::Answer>,
 ) -> Result<Return> {
     if upstream.is_empty() {
         return Ok(Return::None);
     }
-    // Most checkouts sit on the default branch. When the cached remote HEAD
-    // already names the current branch, a second network round trip only to
-    // confirm it doubles the cost of status. A stale cache can only hide a
-    // possible return, never produce one.
-    if default_branch(path, remote, options, false)?.as_deref() == Some(branch) {
-        return Ok(Return::None);
-    }
-    let Some(default) = default_branch(path, remote, options, fetch)? else {
-        return Ok(Return::None);
+    // GitHub already told us the default branch. Otherwise: most checkouts sit
+    // on the default branch, and when the cached remote HEAD already names the
+    // current branch, a second network round trip only to confirm it doubles
+    // the cost of status. A stale cache can only hide a possible return.
+    let default = if let Some(github) = github {
+        github.default_branch.clone()
+    } else {
+        if default_branch(path, remote, options, false)?.as_deref() == Some(branch) {
+            return Ok(Return::None);
+        }
+        let Some(default) = default_branch(path, remote, options, fetch)? else {
+            return Ok(Return::None);
+        };
+        default
     };
     if default == branch {
         return Ok(Return::None);
@@ -1083,7 +1170,18 @@ fn return_plan(
     } else {
         false
     };
-    if !ancestor && !patch_merged && !merged_pr(path, remote, branch, head, &default, timeout)? {
+    let merged_on_github = || {
+        github.map_or_else(
+            || merged_pr(path, remote, branch, head, &default, timeout),
+            |github| {
+                Ok(github
+                    .merged
+                    .iter()
+                    .any(|(oid, base)| oid == head && *base == default))
+            },
+        )
+    };
+    if !ancestor && !patch_merged && !merged_on_github()? {
         return Ok(Return::None);
     }
     let reference = format!("refs/heads/{default}");

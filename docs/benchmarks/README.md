@@ -141,3 +141,11 @@ Two further changes do not show on this clean corpus:
   about 10% at that parallelism, so repot does not configure it; the user guide
   shows how to enable it in `~/.ssh/config`.
 
+### Batched GitHub survey
+
+With one batched GitHub query deciding which checkouts need a fetch at all,
+`repot status` on the same 45 real checkouts takes 2.1-2.4 s (from about 5 s),
+and its JSON is identical to a run where GitHub is unreachable. Only the two
+checkouts without an upstream branch were still fetched; their fetches overlap
+with the query.
+

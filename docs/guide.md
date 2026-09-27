@@ -190,6 +190,16 @@ needs a single connection: the remote's default branch is read from the cached
 `origin/HEAD` when the checkout is already on it. Sync updates each checkout as
 soon as its own inspection finishes, while other fetches are still running.
 
+For repositories on GitHub, status first asks GitHub for every branch tip in a
+few batched requests through `gh` (when it is installed and signed in).
+Checkouts whose tracking refs already match are not fetched at all; the footer
+says how many GitHub confirmed. The same answers provide the default branch and
+merged pull requests, so no per-checkout `ls-remote` or `gh pr view` is needed.
+Any error, other host or checkout without an upstream branch is fetched as
+usual, and sync still revalidates everything locally before changing anything.
+Skipped checkouts do not prune or update their other remote-tracking branches
+until a later fetch.
+
 Fetching is dominated by connection setup, especially over SSH. If status still
 feels slow, SSH connection sharing lets fetches reuse one authenticated
 connection per host:

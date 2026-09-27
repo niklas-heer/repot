@@ -7,6 +7,7 @@ mod doctor;
 mod get;
 mod ghq_listing;
 mod git_read;
+mod github;
 mod help;
 mod info;
 mod lifecycle;

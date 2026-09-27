@@ -426,7 +426,7 @@ fn update(config: &Config, spec: &Spec, options: &Options) -> Result<Report> {
         timeout: Duration::from_secs(options.timeout),
         no_fetch: options.dry_run,
     };
-    let mut result = status::inspect(&spec.path, config, &settings, !options.dry_run)?;
+    let mut result = status::inspect(&spec.path, config, &settings, !options.dry_run, None)?;
     if result.action == "pull" && !options.dry_run {
         sync::apply(&settings, &mut result)?;
     }
