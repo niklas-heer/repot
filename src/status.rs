@@ -59,6 +59,9 @@ pub struct Report {
     pub failed: bool,
     #[serde(skip)]
     pub plan: Option<Plan>,
+    /// The remote the branch tracks, for suggesting exact commands.
+    #[serde(skip)]
+    pub remote: Option<String>,
 }
 
 impl Report {
@@ -76,6 +79,7 @@ impl Report {
             applied: false,
             failed: false,
             plan: None,
+            remote: None,
         }
     }
 
@@ -100,7 +104,7 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
                 0,
             )
         });
-        collect(config, options, progress.as_ref())?
+        collect(config, options, progress.as_ref(), None)?
     };
     render(
         &reports,
@@ -117,18 +121,23 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
     )
 }
 
+/// Runs after each inspection on the same worker, so updates overlap with the
+/// fetches of other repositories instead of waiting for all of them.
+pub type Finish<'a> = &'a (dyn Fn(&mut Report) + Sync);
+
 pub fn collect(
     config: &Config,
     options: &Options,
     progress: Option<&ui::Progress>,
+    finish: Option<Finish<'_>>,
 ) -> Result<Vec<Report>> {
     let repositories = discovery::discover(config)?;
     if let Some(progress) = progress {
         progress.phase(
-            if options.no_fetch {
-                "Inspecting"
-            } else {
-                "Fetching"
+            match (options.no_fetch, finish.is_some()) {
+                (true, _) => "Inspecting",
+                (false, false) => "Fetching",
+                (false, true) => "Syncing",
             },
             repositories.len(),
         );
@@ -147,17 +156,17 @@ pub fn collect(
                         if let Some(progress) = progress {
                             progress.working_on(&ui::repository_name(&repo.path, &config.roots));
                         }
-                        reports.push(
-                            inspect(&repo.path, config, options, !options.no_fetch).unwrap_or_else(
-                                |_| {
-                                    let mut report = Report::empty(&repo.path);
-                                    report.state = "inspection-failed".into();
-                                    report
-                                        .fail("could not inspect repository; inspect it with git");
-                                    report
-                                },
-                            ),
-                        );
+                        let mut report = inspect(&repo.path, config, options, !options.no_fetch)
+                            .unwrap_or_else(|_| {
+                                let mut report = Report::empty(&repo.path);
+                                report.state = "inspection-failed".into();
+                                report.fail("could not inspect repository; inspect it with git");
+                                report
+                            });
+                        if let Some(finish) = finish {
+                            finish(&mut report);
+                        }
+                        reports.push(report);
                         if let Some(progress) = progress {
                             progress.advance();
                         }
@@ -234,32 +243,63 @@ pub fn render(reports: &[Report], json: bool, view: &View<'_>) -> Result<u8> {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Group {
     Failed,
+    HeldBack,
     Review,
     Push,
     Update,
     Updated,
+    Working,
     Clean,
 }
 
+/// Reasons that only restate what the facts column already shows.
+const GENERIC_REASONS: [&str; 2] = [
+    "working tree has local changes",
+    "review branch, upstream and stashes manually",
+];
+
 impl Group {
+    /// Presentation only: JSON keeps the stable `action` values.
     fn of(report: &Report) -> Self {
         if report.failed {
-            Self::Failed
-        } else if report.applied {
-            Self::Updated
-        } else {
-            match report.action.as_str() {
-                "pull" | "return" => Self::Update,
-                "push" => Self::Push,
-                "none" => Self::Clean,
-                _ => Self::Review,
+            return Self::Failed;
+        }
+        if report.applied {
+            return Self::Updated;
+        }
+        match report.action.as_str() {
+            "pull" | "return" => Self::Update,
+            "push" => Self::Push,
+            "none" => Self::Clean,
+            _ => {
+                let dirty = !report.dirty.clean();
+                let generic = GENERIC_REASONS.contains(&report.reason.as_str());
+                match report.state.as_str() {
+                    "behind" if dirty => Self::HeldBack,
+                    // Nothing to fetch; the only thing going on is your own work.
+                    "synced" | "ahead" if generic && (dirty || report.stashes > 0) => Self::Working,
+                    _ => Self::Review,
+                }
             }
+        }
+    }
+
+    /// Advice shared by every row of a group, shown once beside its heading.
+    const fn advice(self) -> Option<&'static str> {
+        match self {
+            Self::HeldBack => Some("commit or stash your changes, then run repot sync"),
+            Self::Push => Some("push when ready; repot never pushes"),
+            Self::Working => Some("uncommitted work; nothing new upstream"),
+            Self::Failed => Some("left untouched"),
+            _ => None,
         }
     }
 
     const fn heading(self, mode: Mode) -> (&'static str, &'static str, ui::Style) {
         match self {
             Self::Failed => ("✗", "Failed", ui::BAD),
+            Self::HeldBack => ("◆", "Held back by local changes", ui::WARN),
+            Self::Working => ("✎", "Work in progress", ui::INFO),
             Self::Review => ("●", "Needs review", ui::WARN),
             Self::Push => ("↑", "Ready to push", ui::PUSH),
             Self::Update => (
@@ -325,15 +365,28 @@ fn hint(report: &Report) -> Option<String> {
             _ => "fast-forwarded".into(),
         });
     }
-    match report.reason.as_str() {
-        ""
-        | "up to date"
-        | "fast-forward current branch"
-        | "working tree has local changes"
-        | "no remote configured"
-        | "review branch, upstream and stashes manually"
-        | "local commits; push manually when ready" => None,
-        reason => Some(ui::visible(reason)),
+    let remote = report.remote.as_deref().unwrap_or("origin");
+    let branch = report.branch.as_deref().map(ui::visible);
+    match (report.state.as_str(), report.reason.as_str()) {
+        (
+            _,
+            ""
+            | "up to date"
+            | "fast-forward current branch"
+            | "local commits; push manually when ready",
+        ) => None,
+        (_, reason) if !GENERIC_REASONS.contains(&reason) && reason != "no remote configured" => {
+            Some(ui::visible(reason))
+        }
+        ("no-remote", _) => Some("publish it with repot publish OWNER/NAME".into()),
+        ("no-upstream", _) => {
+            branch.map(|branch| format!("push it with git push -u {remote} {branch}"))
+        }
+        ("diverged", _) => Some("both sides moved; merge or rebase by hand".into()),
+        ("detached", _) => Some("switch to a branch".into()),
+        ("ahead", _) => Some("local commits not pushed yet".into()),
+        ("behind", _) if report.stashes > 0 => Some("stashed work; review it first".into()),
+        _ => None,
     }
 }
 
@@ -356,26 +409,31 @@ fn clean_summary(
             _ => owners.push((owner, vec![leaf])),
         }
     }
+    // Flow owners one after another; a new owner starts with its dimmed prefix.
+    let mut line = String::from("   ");
+    let mut length = 3_usize;
     for (owner, leaves) in owners {
-        let indent = 3_usize.saturating_add(ui::width(&owner));
-        let mut line = format!("   {}", paint.paint(ui::DIM, &owner));
-        let mut length = indent;
         for (position, leaf) in leaves.iter().enumerate() {
-            if position > 0 {
-                if length.saturating_add(ui::width(leaf)).saturating_add(2) > columns {
-                    let _ = writeln!(out, "{line}");
-                    line = " ".repeat(indent);
-                    length = indent;
-                } else {
-                    line.push_str("  ");
-                    length = length.saturating_add(2);
-                }
+            let prefix = if position == 0 { owner.as_str() } else { "" };
+            let gap = match (length > 3, position) {
+                (false, _) => 0,
+                (true, 0) => 4,
+                (true, _) => 2,
+            };
+            let size = ui::width(prefix).saturating_add(ui::width(leaf));
+            if length > 3 && length.saturating_add(gap).saturating_add(size) > columns {
+                let _ = writeln!(out, "{line}");
+                line = String::from("   ");
+                length = 3;
+            } else {
+                line.push_str(&" ".repeat(gap));
+                length = length.saturating_add(gap);
             }
-            line.push_str(leaf);
-            length = length.saturating_add(ui::width(leaf));
+            let _ = write!(line, "{}{leaf}", paint.paint(ui::DIM, prefix));
+            length = length.saturating_add(size);
         }
-        let _ = writeln!(out, "{line}");
     }
+    let _ = writeln!(out, "{line}");
     out.push('\n');
 }
 
@@ -412,7 +470,6 @@ fn footer(out: &mut String, reports: &[Report], view: &View<'_>, paint: ui::Pain
             "run {} to apply",
             paint.paint(ui::BOLD, "repot sync")
         )),
-        _ if count(Group::Failed) > 0 => Some("failed checkouts were left untouched".to_owned()),
         _ if reports.is_empty() => Some(format!(
             "clone one with {}",
             paint.paint(ui::BOLD, "repot clone owner/name")
@@ -470,9 +527,13 @@ fn terminal_report(reports: &[Report], view: &View<'_>) -> String {
             })
             .collect();
         let (symbol, title, style) = group.heading(view.mode);
+        let advice = group
+            .advice()
+            .map(|advice| format!("  {}", paint.paint(ui::DIM, format!("· {advice}"))))
+            .unwrap_or_default();
         let _ = writeln!(
             out,
-            " {} {}  {}",
+            " {} {}  {}{advice}",
             paint.paint(style.bold(), symbol),
             paint.paint(ui::BOLD, title),
             paint.paint(ui::DIM, members.len())
@@ -557,6 +618,7 @@ pub fn inspect(path: &Path, config: &Config, options: &Options, fetch: bool) -> 
         return Ok(report);
     }
     let remote = choose_remote(path, report.branch.as_deref(), &remotes, timeout)?;
+    report.remote = Some(remote.clone());
     if fetch
         && probe(
             path,
@@ -906,6 +968,13 @@ fn return_plan(
     if upstream.is_empty() {
         return Ok(Return::None);
     }
+    // Most checkouts sit on the default branch. When the cached remote HEAD
+    // already names the current branch, a second network round trip only to
+    // confirm it doubles the cost of status. A stale cache can only hide a
+    // possible return, never produce one.
+    if default_branch(path, remote, options, false)?.as_deref() == Some(branch) {
+        return Ok(Return::None);
+    }
     let Some(default) = default_branch(path, remote, options, fetch)? else {
         return Ok(Return::None);
     };
@@ -1074,4 +1143,92 @@ pub fn validate_plan(report: &Report, options: &Options) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn report(state: &str, action: &str, reason: &str, dirty: Dirty, stashes: usize) -> Report {
+        let mut report = Report::empty(Path::new("/projects/owner/name"));
+        state.clone_into(&mut report.state);
+        action.clone_into(&mut report.action);
+        reason.clone_into(&mut report.reason);
+        report.dirty = dirty;
+        report.stashes = stashes;
+        report.branch = Some("feature".into());
+        report.remote = Some("upstream".into());
+        report
+    }
+
+    fn untracked() -> Dirty {
+        Dirty {
+            untracked: 1,
+            ..Dirty::default()
+        }
+    }
+
+    #[test]
+    fn local_work_is_separated_from_repositories_that_need_a_decision() {
+        let held = report("behind", "review", GENERIC_REASONS[0], untracked(), 0);
+        assert!(Group::of(&held) == Group::HeldBack);
+        let working = report("synced", "review", GENERIC_REASONS[0], untracked(), 0);
+        assert!(Group::of(&working) == Group::Working);
+        let stash = report("synced", "review", GENERIC_REASONS[1], Dirty::default(), 1);
+        assert!(Group::of(&stash) == Group::Working);
+        let diverged = report(
+            "diverged",
+            "review",
+            GENERIC_REASONS[1],
+            Dirty::default(),
+            0,
+        );
+        assert!(Group::of(&diverged) == Group::Review);
+        // A specific safety reason is never softened into "work in progress".
+        let operation = report(
+            "synced",
+            "review",
+            "Git operation in progress",
+            untracked(),
+            0,
+        );
+        assert!(Group::of(&operation) == Group::Review);
+        let mut failed = held;
+        failed.fail("fetch failed");
+        assert!(Group::of(&failed) == Group::Failed);
+    }
+
+    #[test]
+    fn advice_names_the_exact_remote_and_branch() {
+        let unpushed = report(
+            "no-upstream",
+            "review",
+            GENERIC_REASONS[1],
+            Dirty::default(),
+            0,
+        );
+        assert_eq!(
+            hint(&unpushed).as_deref(),
+            Some("push it with git push -u upstream feature")
+        );
+        let specific = report(
+            "synced",
+            "review",
+            "submodules require manual review",
+            Dirty::default(),
+            0,
+        );
+        assert_eq!(
+            hint(&specific).as_deref(),
+            Some("submodules require manual review")
+        );
+        let remote = report(
+            "no-remote",
+            "review",
+            "no remote configured",
+            Dirty::default(),
+            0,
+        );
+        assert!(hint(&remote).is_some_and(|hint| hint.contains("repot publish")));
+    }
 }

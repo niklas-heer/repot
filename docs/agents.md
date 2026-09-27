@@ -21,7 +21,7 @@ TOML, KDL v2 and YAML are supported. Root settings and manifest entries determin
 the scope of bulk operations: changing the current directory does not restrict
 `status`, `sync` or `restore` to that checkout.
 
-For current remote information, use `repot status --json --jobs 8 --timeout 30`.
+For current remote information, use `repot status --json --jobs 24 --timeout 30`.
 It fetches and updates remote-tracking refs, although it does not update working
 files. Use this only when network access and fetching are within the task's scope.
 

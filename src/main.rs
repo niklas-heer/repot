@@ -185,7 +185,7 @@ struct Inspection {
     #[arg(long)]
     json: bool,
     /// Maximum concurrent repositories.
-    #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u8).range(1..=32))]
+    #[arg(long, default_value_t = 24, value_parser = clap::value_parser!(u8).range(1..=32))]
     jobs: u8,
     /// Network subprocess timeout in seconds.
     #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..=3600))]

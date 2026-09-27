@@ -20,33 +20,22 @@ pub fn run(config: &Config, options: &Options, dry_run: bool) -> Result<u8> {
             "dry run: planning from cached remote refs; nothing is fetched or changed",
         );
     }
-    let reports = {
-        let progress = (!options.json).then(|| ui::Progress::start("Fetching", 0));
-        let mut reports = status::collect(config, &effective, progress.as_ref())?;
-        if !dry_run {
-            let planned = reports
-                .iter()
-                .filter(|report| report.plan.is_some())
-                .count();
-            if let Some(progress) = &progress {
-                progress.phase("Updating", planned);
-            }
-            for report in &mut reports {
-                if report.plan.is_none() {
-                    continue;
-                }
-                if let Some(progress) = &progress {
-                    progress.working_on(&ui::repository_name(&report.path, &config.roots));
-                }
-                if apply(&effective, report).is_err() {
-                    report.fail("update refused or failed; repository preserved for manual review");
-                }
-                if let Some(progress) = &progress {
-                    progress.advance();
-                }
-            }
+    let update = |report: &mut Report| {
+        // Each repository is revalidated and updated independently, right after
+        // its own inspection; no two workers ever touch the same checkout.
+        if report.plan.is_some() && apply(&effective, report).is_err() {
+            report.fail("update refused or failed; repository preserved for manual review");
         }
-        reports
+    };
+    let finish: status::Finish<'_> = &update;
+    let reports = {
+        let progress = (!options.json).then(|| ui::Progress::start("Syncing", 0));
+        status::collect(
+            config,
+            &effective,
+            progress.as_ref(),
+            (!dry_run).then_some(finish),
+        )?
     };
     status::render(
         &reports,

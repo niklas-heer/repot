@@ -101,7 +101,7 @@ such as your dotfiles.
 ```sh
 repot status                  # grouped report with live progress
 repot status --json           # stable output for scripts
-repot sync --jobs 8 --timeout 30
+repot sync --jobs 24 --timeout 30
 ```
 
 `status` groups checkouts by what they need (review, push, update) and

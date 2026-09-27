@@ -133,16 +133,34 @@ names, including in dry-runs, so a successful operation remains discoverable.
 ```sh
 repot status --json
 repot sync --dry-run
-repot sync --jobs 8 --timeout 30
+repot sync --jobs 24 --timeout 30
 ```
 
 Status fetches the relevant remote for each checkout with bounded parallelism
-(eight at a time by default) and shows a live counter while it works. In a
-terminal, the report groups repositories by what they need: **Failed**, **Needs
-review**, **Ready to push**, **Ready to update** (or **Updated** after a sync), and
-a compact **Up to date** summary per owner. Each row shows the branch, commits
-behind (↓) or ahead (↑), and staged, modified, untracked and stashed work, followed
-by the reason when it adds something. The footer suggests the next step, such as
+(24 at a time by default) and shows a live counter while it works. Each checkout
+needs a single connection: the remote's default branch is read from the cached
+`origin/HEAD` when the checkout is already on it. Sync updates each checkout as
+soon as its own inspection finishes, while other fetches are still running.
+
+Fetching is dominated by connection setup, especially over SSH. If status still
+feels slow, SSH connection sharing lets fetches reuse one authenticated
+connection per host:
+
+```sshconfig
+Host github.com
+  ControlMaster auto
+  ControlPath ~/.ssh/control-%C
+  ControlPersist 60
+``` In a
+terminal, the report groups repositories by what they need: **Failed**, **Held
+back by local changes** (behind, but uncommitted work blocks a fast-forward),
+**Needs review**, **Ready to push**, **Ready to update** (or **Updated** after a
+sync), **Work in progress** (nothing new upstream, only your own uncommitted work
+or stashes), and a compact **Up to date** summary. Each row shows the branch,
+commits behind (↓) or ahead (↑), and staged, modified, untracked and stashed work,
+followed by a concrete suggestion such as `git push -u origin feature` for an
+unpushed branch or `repot publish` for a checkout without a remote. The grouping
+is presentation only: JSON `action` values and exit codes are unchanged. The footer suggests the next step, such as
 `repot sync`. Piped output keeps one tab-separated line per repository for
 scripts, and `--json` stays the stable machine interface.
 `--no-fetch` or `status --dry-run` uses cached tracking refs. `sync --dry-run` also uses cached refs and
