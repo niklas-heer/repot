@@ -91,7 +91,10 @@ repot list -p                 # print full paths for scripts
 ```
 
 The picker opens right under your prompt instead of taking over the screen, so
-whatever you were looking at stays visible. Type to filter; use arrows or
+whatever you were looking at stays visible. It puts the repositories you use most
+and most recently at the top, and on wide terminals previews the selected
+repository's branch, changes and recent commits. `repot info` prints the same
+details for the checkout you are in. Type to filter; use arrows or
 <kbd>Ctrl</kbd>+<kbd>N</kbd>/<kbd>P</kbd> to select, <kbd>Enter</kbd> to go, and
 <kbd>Esc</kbd> to cancel. It includes registered repositories outside the tree,
 such as your dotfiles.

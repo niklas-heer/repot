@@ -65,6 +65,7 @@ mod tests {
             command.cwd(self.home.path());
             command.env("HOME", self.home.path());
             command.env("XDG_CONFIG_HOME", self.home.path().join("config"));
+            command.env("XDG_STATE_HOME", self.home.path().join("state"));
             command.env("GHQ_ROOT", &self.root);
             command.env("GIT_CONFIG_NOSYSTEM", "1");
             command.env("GIT_CONFIG_GLOBAL", self.home.path().join("gitconfig"));

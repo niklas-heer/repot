@@ -56,6 +56,7 @@ mod tests {
             .env("HOME", root)
             .env("GHQ_ROOT", root.join("repos"))
             .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("XDG_STATE_HOME", root.join("state"))
             .env("GIT_CONFIG_GLOBAL", root.join("gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env_remove("GIT_CONFIG_COUNT")

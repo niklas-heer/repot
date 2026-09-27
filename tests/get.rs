@@ -90,6 +90,7 @@ mod tests {
                 .env("HOME", &self.home)
                 .env("GHQ_ROOT", &self.root)
                 .env("XDG_CONFIG_HOME", self.home.join("config"))
+                .env("XDG_STATE_HOME", self.home.join("state"))
                 .env("GIT_CONFIG_NOSYSTEM", "1")
                 .env("GIT_CONFIG_GLOBAL", self.home.join(".gitconfig"))
                 .env("GIT_TERMINAL_PROMPT", "0")

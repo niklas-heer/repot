@@ -60,6 +60,7 @@ mod tests {
                 .env("HOME", self.temp.path())
                 .env("GHQ_ROOT", self.path("ghq"))
                 .env("XDG_CONFIG_HOME", self.path("config"))
+                .env("XDG_STATE_HOME", self.path("state"))
                 .env("GIT_CONFIG_GLOBAL", self.path("gitconfig"))
                 .env("GIT_CONFIG_NOSYSTEM", "1")
                 .env("GIT_AUTHOR_NAME", "Tester")

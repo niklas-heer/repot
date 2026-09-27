@@ -31,6 +31,7 @@ files. Use this only when network access and fetching are within the task's scop
 | --- | --- | --- |
 | Locate a checkout | `list --json` | Returns absolute paths; use your process working directory instead of the interactive picker. |
 | Inspect cached state | `status --no-fetch --json` | No fetch; observations may be stale. |
+| Describe one checkout | `info NAME --json` | Local only: branch, cached ahead/behind, change counts, remote without credentials, recent commits. |
 | Preview safe updates | `sync --dry-run --json` | Uses cached refs; never fetches or applies a plan. |
 | Apply safe updates | `sync --json` | Fetches, revalidates and applies eligible updates across configured checkouts. |
 | Clone a project | `clone URL --json` | Stages privately; supports `--dry-run`, `--timeout` and explicit `--vcs git`. `get` is an alias. |

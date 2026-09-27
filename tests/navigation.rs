@@ -31,6 +31,7 @@ mod tests {
                 .current_dir(self.directory.path())
                 .env("HOME", self.directory.path())
                 .env("XDG_CONFIG_HOME", self.directory.path().join("config"))
+                .env("XDG_STATE_HOME", self.directory.path().join("state"))
                 .env("GHQ_ROOT", &self.root)
                 .env("GIT_CONFIG_NOSYSTEM", "1")
                 .env("GIT_CONFIG_GLOBAL", self.directory.path().join("gitconfig"))
@@ -84,6 +85,166 @@ mod tests {
             fs::read(file).expect("handoff"),
             wanted.as_os_str().as_encoded_bytes()
         );
+    }
+
+    fn visits(fixture: &Fixture) -> Vec<String> {
+        fs::read_to_string(fixture.directory.path().join("state/repot/visits"))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| line.split_once('\t').expect("time and path").1.to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn visits_record_checkout_switches_only() {
+        let fixture = Fixture::new();
+        let alpha = fixture.repo("host/owner/alpha");
+        let beta = fixture.repo("host/owner/beta");
+        fs::create_dir_all(beta.join("src/deep")).expect("nested directory");
+        let outside = fixture.directory.path().join("tmp");
+        for path in [
+            &alpha,
+            &alpha,
+            &beta.join("src/deep"),
+            &beta,
+            &outside,
+            &fixture.directory.path().join("missing"),
+        ] {
+            let output = fixture.repot(&["visit", "--", path.to_str().expect("path")]);
+            assert!(output.status.success(), "visits never fail the shell hook");
+            assert!(output.stdout.is_empty() && output.stderr.is_empty());
+        }
+        // Repeats and moves inside the same checkout are one visit; paths
+        // outside any checkout are not recorded at all.
+        assert_eq!(
+            visits(&fixture),
+            [alpha.to_string_lossy(), beta.to_string_lossy()]
+        );
+        assert!(fixture.repot(&["cd", "alpha"]).status.success());
+        assert_eq!(visits(&fixture).len(), 3, "cd counts the jump");
+        assert!(fixture.repot(&["cd", "alpha"]).status.success());
+        assert_eq!(visits(&fixture).len(), 3, "staying put is not a switch");
+    }
+
+    #[test]
+    fn info_reports_local_state_of_the_current_or_named_checkout_without_secrets() {
+        let fixture = Fixture::new();
+        let repo = fixture.repo("host/owner/sprout");
+        fixture.repo("host/owner/other");
+        let git = |args: &[&str]| {
+            let output = fixture
+                .command("git")
+                .current_dir(&repo)
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.invalid")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.invalid")
+                .args(args)
+                .output()
+                .expect("git runs");
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        fs::write(repo.join("tracked"), "one").expect("file");
+        git(&["add", "tracked"]);
+        git(&["commit", "-m", "first commit"]);
+        fs::write(repo.join("tracked"), "two").expect("edit");
+        fs::write(repo.join("new"), "untracked").expect("untracked");
+        git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://ghp_secret@example.com/owner/sprout.git",
+        ]);
+        let named = fixture.repot(&["info", "sprout", "--json"]);
+        assert!(
+            named.status.success(),
+            "{}",
+            String::from_utf8_lossy(&named.stderr)
+        );
+        let current = fixture
+            .command(env!("CARGO_BIN_EXE_repot"))
+            .current_dir(&repo)
+            .args(["info", "--json"])
+            .output()
+            .expect("repot runs");
+        assert_eq!(
+            current.stdout, named.stdout,
+            "no query means the checkout you are in"
+        );
+        let text = String::from_utf8(named.stdout).expect("UTF-8");
+        assert!(!text.contains("ghp_secret"));
+        let info: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+        assert_eq!(info["remote"], "https://example.com/owner/sprout.git");
+        assert_eq!(info["modified"], 1);
+        assert_eq!(info["untracked"], 1);
+        assert_eq!(info["commits"][0]["subject"], "first commit");
+        let human = fixture.repot(&["info", "sprout"]);
+        let human = String::from_utf8_lossy(&human.stdout);
+        assert!(human.contains("1 modified · 1 untracked"));
+        assert!(!human.contains("ghp_secret"));
+    }
+
+    #[test]
+    fn shell_hooks_track_directory_changes_unless_disabled() {
+        let fixture = Fixture::new();
+        let alpha = fixture.repo("host/owner/alpha");
+        let beta = fixture.repo("host/owner/beta");
+        // zsh and fish fire their hooks in scripts; bash and Nushell hooks run
+        // at the interactive prompt and are covered by their own init scripts.
+        for shell in ["zsh", "fish"] {
+            if Command::new(shell).arg("--version").output().is_err() {
+                eprintln!("skipping {shell}: executable unavailable");
+                continue;
+            }
+            let _ = fs::remove_dir_all(fixture.directory.path().join("state"));
+            for (flags, expected) in [(&[][..], 2), (&["--no-track"][..], 0)] {
+                let init = fixture
+                    .repot(&[&["shell-init", shell][..], flags].concat())
+                    .stdout;
+                let script = fixture.directory.path().join("hook-script");
+                let mut body = String::from_utf8(init).expect("UTF-8 init");
+                write!(
+                    body,
+                    "\ncd '{}'\ncd '{}'\ncd '{}'\n",
+                    alpha.display(),
+                    beta.display(),
+                    fixture.directory.path().display()
+                )
+                .expect("script");
+                fs::write(&script, body).expect("hook script");
+                let mut command = fixture.command(shell);
+                if shell == "zsh" {
+                    command.arg("-f");
+                } else {
+                    command.arg("--no-config");
+                }
+                let binary = Path::new(env!("CARGO_BIN_EXE_repot"))
+                    .parent()
+                    .expect("binary directory")
+                    .to_path_buf();
+                let path = env::join_paths(
+                    std::iter::once(binary)
+                        .chain(env::split_paths(&env::var_os("PATH").unwrap_or_default())),
+                )
+                .expect("PATH");
+                let output = command
+                    .env("PATH", path)
+                    .arg(&script)
+                    .output()
+                    .expect("shell");
+                assert!(
+                    output.status.success(),
+                    "{shell}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert_eq!(visits(&fixture).len(), expected, "{shell} {flags:?}");
+                let _ = fs::remove_dir_all(fixture.directory.path().join("state"));
+            }
+        }
     }
 
     #[test]

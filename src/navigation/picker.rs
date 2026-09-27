@@ -23,11 +23,15 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, ListState, Padding, Paragraph};
 use ratatui::{Frame, Terminal, TerminalOptions, Viewport};
 
 use crate::Result;
 use crate::discovery::Repository;
+use crate::info::{self, Info};
+use crate::visits::Visits;
+use std::collections::{HashMap, HashSet};
+use std::sync::mpsc;
 
 const MAX_QUERY: usize = 1024;
 
@@ -37,6 +41,10 @@ struct Entry {
     display: String,
     name_text: Utf32String,
     path_text: Utf32String,
+    /// Ranking boost from frecency: how often and how recently you went there.
+    boost: u32,
+    /// Latest Git activity, which orders checkouts you have not visited yet.
+    activity: Option<std::time::SystemTime>,
 }
 
 use crate::ui::visible;
@@ -53,7 +61,12 @@ struct Picker {
     matcher: Matcher,
     pattern: Pattern,
     monochrome: bool,
+    /// Details for the preview pane, filled in by a background worker.
+    previews: HashMap<PathBuf, Info>,
 }
+
+/// The preview pane appears beside the results from this terminal width.
+const PREVIEW_WIDTH: u16 = 100;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Action {
@@ -64,7 +77,13 @@ enum Action {
 }
 
 impl Picker {
-    fn new(repositories: &[Repository], roots: &[PathBuf], query: &str, monochrome: bool) -> Self {
+    fn new(
+        repositories: &[Repository],
+        roots: &[PathBuf],
+        visits: &HashMap<PathBuf, Visits>,
+        query: &str,
+        monochrome: bool,
+    ) -> Self {
         let entries = repositories
             .iter()
             .map(|repository| {
@@ -76,12 +95,17 @@ impl Picker {
                         .to_string_lossy(),
                 );
                 let display = crate::ui::repository_name(&repository.path, roots);
+                let frecency = visits
+                    .get(&repository.path)
+                    .map_or(0, |visits| visits.frecency);
                 Entry {
                     path: repository.path.clone(),
                     name_text: Utf32String::from(name.as_str()),
                     path_text: Utf32String::from(display.as_str()),
                     name,
                     display,
+                    boost: u32::try_from(frecency.isqrt().saturating_mul(4)).unwrap_or(u32::MAX),
+                    activity: crate::visits::activity(&repository.path),
                 }
             })
             .collect();
@@ -99,6 +123,7 @@ impl Picker {
             matcher: Matcher::new(Config::DEFAULT),
             pattern: Pattern::default(),
             monochrome,
+            previews: HashMap::new(),
         };
         picker.filter();
         picker
@@ -123,13 +148,25 @@ impl Picker {
                     self.pattern
                         .score(entry.path_text.slice(..), &mut self.matcher)
                 })?;
-                Some((index, name_score.is_some(), score))
+                // Frecency lifts the places you actually go; it refines the
+                // fuzzy ranking rather than overriding a clearly better match.
+                Some((
+                    index,
+                    name_score.is_some(),
+                    score.saturating_add(entry.boost),
+                    entry.activity,
+                ))
             })
             .collect();
-        matches.sort_by_key(|&(index, name_match, score)| {
-            (Reverse(name_match), Reverse(score), index)
+        matches.sort_by_key(|&(index, name_match, score, activity)| {
+            (
+                Reverse(name_match),
+                Reverse(score),
+                Reverse(activity),
+                index,
+            )
         });
-        self.matches = matches.into_iter().map(|(index, _, _)| index).collect();
+        self.matches = matches.into_iter().map(|(index, ..)| index).collect();
         self.selection =
             ListState::default().with_selected((!self.matches.is_empty()).then_some(0));
     }
@@ -305,6 +342,71 @@ impl Picker {
         }
     }
 
+    /// The selected repository, when its preview has not been loaded yet.
+    fn wanted_preview(&self) -> Option<PathBuf> {
+        self.selected()
+            .map(|entry| entry.path.clone())
+            .filter(|path| !self.previews.contains_key(path))
+    }
+
+    fn preview_lines(&self, width: usize) -> Vec<Line<'static>> {
+        let muted = Style::default().add_modifier(Modifier::DIM);
+        let Some(entry) = self.selected() else {
+            return Vec::new();
+        };
+        let fit = |text: String| crate::ui::truncate(&text, width);
+        let mut lines = vec![Line::styled(
+            fit(entry.display.clone()),
+            Style::default().add_modifier(Modifier::BOLD),
+        )];
+        let Some(info) = self.previews.get(&entry.path) else {
+            lines.push(Line::styled("reading…", muted));
+            return lines;
+        };
+        if info.unreadable {
+            lines.push(Line::styled("Git could not read this checkout", muted));
+            return lines;
+        }
+        lines.push(Line::raw(fit(info::branch_line(info))));
+        let changed = if self.monochrome {
+            Style::default()
+        } else {
+            Style::default().fg(Color::Yellow)
+        };
+        lines.push(info::changes(info).map_or_else(
+            || Line::styled("clean", muted),
+            |changes| Line::styled(fit(changes), changed),
+        ));
+        lines.push(Line::styled(
+            fit(info.remote.clone().unwrap_or_else(|| "no remote".into())),
+            muted,
+        ));
+        lines.push(Line::styled(fit(info::visit_line(info)), muted));
+        for commit in &info.commits {
+            lines.push(Line::from(vec![
+                Span::styled(format!("{} ", commit.hash), muted),
+                Span::raw(crate::ui::truncate(
+                    &format!("{}  {}", crate::visits::ago(commit.time), commit.subject),
+                    width.saturating_sub(commit.hash.chars().count().saturating_add(1)),
+                )),
+            ]));
+        }
+        lines
+    }
+
+    fn draw_preview(&self, frame: &mut Frame<'_>, area: ratatui::layout::Rect) {
+        let lines = self.preview_lines(usize::from(area.width.saturating_sub(3)));
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::default()
+                    .borders(Borders::LEFT)
+                    .border_style(Style::default().add_modifier(Modifier::DIM))
+                    .padding(Padding::horizontal(1)),
+            ),
+            area,
+        );
+    }
+
     fn draw(&mut self, frame: &mut Frame<'_>) {
         let area = frame.area();
         if area.width == 0 || area.height == 0 {
@@ -367,7 +469,17 @@ impl Picker {
             input.y,
         ));
 
-        // Results, best match first, directly under the prompt.
+        // Results, best match first, directly under the prompt, with details
+        // of the selection beside them when there is room.
+        let results = if area.width >= PREVIEW_WIDTH {
+            let [list, preview] =
+                Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
+                    .areas(results);
+            self.draw_preview(frame, preview);
+            list
+        } else {
+            results
+        };
         let rows = usize::from(results.height);
         if self.matches.is_empty() {
             if rows > 0 {
@@ -526,24 +638,54 @@ fn run(repositories: &[Repository], roots: &[PathBuf], query: &str) -> io::Resul
     let _stdout = StdoutOnTerminal::new(&terminal)?;
     let mut guard = TerminalGuard(terminal);
     guard.enter()?;
-    // Prompt and key hint around the results, never taller than needed.
+    // Prompt and key hint around the results, never taller than needed, but
+    // tall enough for the preview when it is shown.
+    let wide = crossterm::terminal::size().is_ok_and(|(columns, _)| columns >= PREVIEW_WIDTH);
     let height = u16::try_from(repositories.len().saturating_add(2))
         .unwrap_or(u16::MAX)
+        .max(if wide { 9 } else { 0 })
         .min(HEIGHT);
     let mut screen = screen(&guard, height)?;
+    let visits = crate::visits::load();
     let mut picker = Picker::new(
         repositories,
         roots,
+        &visits,
         query,
         env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty()),
     );
+    // Previews read Git on a worker so typing never waits for a slow checkout.
+    let (requests, pending) = mpsc::channel::<PathBuf>();
+    let (finished, previews) = mpsc::channel::<(PathBuf, Info)>();
+    std::thread::spawn(move || {
+        while let Ok(path) = pending.recv() {
+            let info = info::gather(&path, visits.get(&path));
+            if finished.send((path, info)).is_err() {
+                break;
+            }
+        }
+    });
+    let mut requested = HashSet::new();
     // Install the resize handler before exposing the first frame.
     event::poll(Duration::ZERO)?;
     let outcome = loop {
+        if let Some(path) = picker.wanted_preview()
+            && requested.insert(path.clone())
+        {
+            let _ = requests.send(path);
+        }
         let mut size = screen.draw(|frame| picker.draw(frame))?.area.as_size();
         let event = loop {
             if signals.cancel.load(Ordering::Relaxed) {
                 break None;
+            }
+            let mut arrived = false;
+            while let Ok((path, info)) = previews.try_recv() {
+                picker.previews.insert(path, info);
+                arrived = true;
+            }
+            if arrived {
+                screen.draw(|frame| picker.draw(frame))?;
             }
             if signals.suspend.swap(false, Ordering::Relaxed) {
                 suspend(&mut guard, &mut screen, height)?;
@@ -603,11 +745,59 @@ mod tests {
         .map(|path| Repository {
             path: PathBuf::from(path),
         });
-        Picker::new(&repositories, &[PathBuf::from("/projects")], query, true)
+        Picker::new(
+            &repositories,
+            &[PathBuf::from("/projects")],
+            &HashMap::new(),
+            query,
+            true,
+        )
     }
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn frecency_orders_the_empty_query_and_refines_but_never_hides_matches() {
+        let repositories =
+            ["/projects/alpha", "/projects/beta", "/projects/gamma"].map(|path| Repository {
+                path: PathBuf::from(path),
+            });
+        let visited = |path: &str, frecency| {
+            (
+                PathBuf::from(path),
+                Visits {
+                    count: 1,
+                    last: Some(1),
+                    frecency,
+                },
+            )
+        };
+        let visits = HashMap::from([
+            visited("/projects/gamma", 160),
+            visited("/projects/beta", 16),
+        ]);
+        let picker = Picker::new(
+            &repositories,
+            &[PathBuf::from("/projects")],
+            &visits,
+            "",
+            true,
+        );
+        assert_eq!(picker.matches, [2, 1, 0], "most used first, then by visits");
+        let picker = Picker::new(
+            &repositories,
+            &[PathBuf::from("/projects")],
+            &visits,
+            "alp",
+            true,
+        );
+        assert_eq!(
+            picker.matches,
+            [0],
+            "frecency never adds non-matching entries"
+        );
     }
 
     #[test]

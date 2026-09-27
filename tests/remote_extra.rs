@@ -88,6 +88,7 @@ exec "$REAL_GIT" "$@"
             c.current_dir(self.home.path())
                 .env("HOME", self.home.path())
                 .env("XDG_CONFIG_HOME", self.home.path().join("config"))
+                .env("XDG_STATE_HOME", self.home.path().join("state"))
                 .env("GHQ_ROOT", self.home.path().join("projects"))
                 .env(
                     "PATH",

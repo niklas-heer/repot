@@ -9,6 +9,7 @@ mod tests {
         Command::new(env!("CARGO_BIN_EXE_repot"))
             .env("HOME", home)
             .env("XDG_CONFIG_HOME", home.join("config"))
+            .env("XDG_STATE_HOME", home.join("state"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", home.join("gitconfig"))
             .args(args)
@@ -58,7 +59,8 @@ mod tests {
             let mut command = Command::new(shell);
             command
                 .env("HOME", home.path())
-                .env("XDG_CONFIG_HOME", home.path().join("config"));
+                .env("XDG_CONFIG_HOME", home.path().join("config"))
+                .env("XDG_STATE_HOME", home.path().join("state"));
             match shell {
                 "bash" => {
                     command

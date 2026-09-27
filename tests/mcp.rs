@@ -31,6 +31,7 @@ mod tests {
                 .current_dir(self.home.path())
                 .env("HOME", self.home.path())
                 .env("XDG_CONFIG_HOME", self.path("config"))
+                .env("XDG_STATE_HOME", self.path("state"))
                 .env("GHQ_ROOT", self.path("ghq"))
                 .env("GIT_CONFIG_GLOBAL", self.path("gitconfig"))
                 .env("GIT_CONFIG_NOSYSTEM", "1")

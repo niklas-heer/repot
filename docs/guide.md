@@ -7,6 +7,7 @@
 | Command | Purpose |
 | --- | --- |
 | `repot cd [query]` | Jump to a repository; an inline fuzzy picker opens when several match |
+| `repot info [query]` | Branch, sync state, local changes, remote, visits and recent commits |
 | `repot list [query]` | List discovered and registered repositories (`ls` also works) |
 | `repot root [--all]` | Show primary or all configured roots |
 | `repot status` / `repot sync` | See what needs attention; fast-forward what is safe |
@@ -56,6 +57,42 @@ noninteractive scripts must provide an unambiguous query. Without the shell
 wrapper, `cd` prints the selected path, so `cd "$(repot cd query)"` also works. Directory symlinks are not traversed;
 linked worktrees can be discovered or registered, and nested submodules are not
 listed separately.
+
+### Ranking: where you actually go
+
+With an empty query, the picker lists the repositories you use first. Two
+signals decide the order:
+
+- **Frecency.** Every switch into a repository is logged, and recent visits weigh
+  more than old ones: a visit in the last hour counts 16, today 8, this week 4,
+  this month 2, and anything older 1. A daily habit therefore beats a single
+  visit, while the repository you just left stays near the top.
+- **Git activity.** Repositories you have not visited yet are ordered by their
+  latest local Git activity (commits, checkouts, merges and staging).
+
+While you type, fuzzy matching decides and frecency breaks close calls; it never
+adds a repository that does not match.
+
+The shell integration records visits whenever your shell enters a checkout,
+however you got there, and `repot cd` records its own selections. Moving between
+directories of the same checkout is not a new visit. The log is a small text
+file at `$XDG_STATE_HOME/repot/visits` (usually `~/.local/state/repot/visits`)
+holding only timestamps and checkout paths; it stays on your machine and is
+trimmed to the latest 4,000 visits. Generate the integration with `--no-track`,
+for example `repot shell-init zsh --no-track`, to switch tracking off, and delete
+the file to forget your history.
+
+### Repository details
+
+`repot info` shows the checkout you are in, `repot info NAME` any other one, and
+`repot info` outside a checkout opens the picker. It prints the path, remote,
+branch with ahead/behind counts from cached remote refs, staged, modified,
+untracked and stashed work, your visits and the five latest commits. `--json`
+gives the same data to scripts. Remote URLs never show embedded credentials.
+
+In terminals at least 100 columns wide, the picker shows the same details for
+the selected repository beside the results; they load in the background, so
+typing never waits for Git.
 
 `list` prints root-relative paths by default, `-p` prints absolute paths, `-e`
 matches exact suffixes, and `--unique` prints the shortest unambiguous names.

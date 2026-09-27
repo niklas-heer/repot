@@ -139,6 +139,14 @@ Local absolute/file remotes are supported only when an entry has an explicit
 path. Credential-bearing URLs and arbitrary shell-helper protocols are rejected.
 See the [user guide](guide.md#find-adopt-and-restore) for commands and safety details.
 
+## Local state
+
+repot keeps one file outside the manifest: the visit log that ranks `repot cd`,
+at `$XDG_STATE_HOME/repot/visits` (`~/.local/state/repot/visits` when
+`XDG_STATE_HOME` is unset). It is machine-specific, so keep it out of your
+dotfiles. See [ranking](guide.md#ranking-where-you-actually-go) for what it
+records and how to turn tracking off.
+
 ## Git identities
 
 Use Git's own `includeIf` rules for per-owner email addresses and signing keys.

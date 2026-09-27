@@ -11,6 +11,20 @@ use crate::discovery::Repository;
 mod picker;
 
 pub fn jump(repositories: &[Repository], roots: &[PathBuf], query: Option<&str>) -> Result<()> {
+    let path = select(repositories, roots, query)?;
+    // Count the jump even without the shell hook; the hook's own record of the
+    // same checkout is deduplicated.
+    let _ = crate::visits::record(&path);
+    handoff(&path)
+}
+
+/// Resolve a query to one repository: an exact or unique match directly,
+/// otherwise the picker in a terminal, otherwise an error for scripts.
+pub fn select(
+    repositories: &[Repository],
+    roots: &[PathBuf],
+    query: Option<&str>,
+) -> Result<PathBuf> {
     let query = query.unwrap_or_default();
     let exact: Vec<_> = repositories
         .iter()
@@ -42,14 +56,13 @@ pub fn jump(repositories: &[Repository], roots: &[PathBuf], query: Option<&str>)
         exact
     };
     match candidates.as_slice() {
-        [repo] => handoff(&repo.path),
+        [repo] => Ok(repo.path.clone()),
         _ if io::stdin().is_terminal() && !repositories.is_empty() => {
-            let selected = picker::pick(repositories, roots, query)?;
-            handoff(&selected)
+            picker::pick(repositories, roots, query)
         }
         [] => Err("no repositories match; use `repot list` to see known repositories".into()),
         _ => Err(format!(
-            "{} repositories match; supply an exact name or run `repot jump` in a terminal",
+            "{} repositories match; supply an exact name or run this in a terminal",
             candidates.len()
         )),
     }
@@ -82,21 +95,67 @@ pub fn handoff(path: &Path) -> Result<()> {
     )
 }
 
-pub fn shell_init(shell: &str) -> Result<()> {
-    let script = match shell {
-        "bash" | "zsh" => POSIX_INIT,
-        "fish" => FISH_INIT,
-        "nu" => NU_INIT,
+pub fn shell_init(shell: &str, track: bool) -> Result<()> {
+    let (script, hook) = match shell {
+        "bash" => (POSIX_INIT, BASH_TRACK),
+        "zsh" => (POSIX_INIT, ZSH_TRACK),
+        "fish" => (FISH_INIT, FISH_TRACK),
+        "nu" => (NU_INIT, NU_TRACK),
         _ => {
             return Err(format!(
                 "unsupported shell {shell:?}; choose nu, zsh, bash, or fish"
             ));
         }
     };
-    io::stdout()
+    let mut output = io::stdout().lock();
+    output
         .write_all(script.as_bytes())
+        .and_then(|()| {
+            if track {
+                output.write_all(hook.as_bytes())
+            } else {
+                Ok(())
+            }
+        })
         .map_err(|error| format!("cannot print shell integration: {error}"))
 }
+
+// Directory-change hooks feed the picker's frecency ranking. They call the
+// binary directly, never the wrapper, and stay silent on any failure.
+const BASH_TRACK: &str = r#"
+# Remember which repositories you use, to rank `repot cd` (disable: --no-track).
+__repot_visit() {
+    if [ "${__repot_last_pwd-}" != "$PWD" ]; then
+        __repot_last_pwd=$PWD
+        command repot visit -- "$PWD" >/dev/null 2>&1
+    fi
+}
+case ";${PROMPT_COMMAND-};" in
+    *";__repot_visit;"*) ;;
+    *) PROMPT_COMMAND="__repot_visit${PROMPT_COMMAND:+;$PROMPT_COMMAND}" ;;
+esac
+"#;
+
+const ZSH_TRACK: &str = r#"
+# Remember which repositories you use, to rank `repot cd` (disable: --no-track).
+__repot_visit() { command repot visit -- "$PWD" >/dev/null 2>&1 }
+autoload -Uz add-zsh-hook
+add-zsh-hook chpwd __repot_visit
+"#;
+
+const FISH_TRACK: &str = r"
+# Remember which repositories you use, to rank `repot cd` (disable: --no-track).
+function __repot_visit --on-variable PWD
+    command repot visit -- $PWD >/dev/null 2>&1
+end
+";
+
+const NU_TRACK: &str = r"
+# Remember which repositories you use, to rank `repot cd` (disable: --no-track).
+$env.config.hooks.env_change.PWD = ($env.config.hooks.env_change.PWD? | default [] | append {|_, after|
+    try { ^repot visit -- $after o+e>| ignore }
+})
+";
 
 const POSIX_INIT: &str = r#"repot() {
     local repot_cd_file repot_status repot_destination

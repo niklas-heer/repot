@@ -7,6 +7,7 @@ mod get;
 mod ghq_listing;
 mod git_read;
 mod help;
+mod info;
 mod lifecycle;
 mod manifest;
 mod manifest_format;
@@ -20,6 +21,7 @@ mod repository_ops;
 mod status;
 mod sync;
 mod ui;
+mod visits;
 
 use clap::{Args, CommandFactory, FromArgMatches as _, Parser, Subcommand};
 use std::io::Write as _;
@@ -63,6 +65,15 @@ enum Commands {
     Cd {
         /// Part of a repository name; the picker opens with it when several match.
         query: Option<String>,
+    },
+    /// Show a repository's branch, changes, remote, recent commits and visits.
+    Info {
+        /// Part of a repository name; defaults to the checkout you are in, or
+        /// opens the picker.
+        query: Option<String>,
+        /// Print machine-readable results.
+        #[arg(long)]
+        json: bool,
     },
     /// List repositories in your roots and registered locations.
     #[command(alias = "ls")]
@@ -155,6 +166,10 @@ enum Commands {
     ShellInit {
         /// Shell to integrate with: nu, zsh, bash or fish.
         shell: String,
+        /// Do not record which repositories you visit; the picker then ranks
+        /// by Git activity and `repot cd` selections only.
+        #[arg(long)]
+        no_track: bool,
     },
     /// Print shell completions without changing shell configuration.
     Completions {
@@ -170,6 +185,12 @@ enum Commands {
     Help {
         /// Command to explain, for example `trash restore`.
         command: Vec<String>,
+    },
+    /// Record a visit to the checkout containing PATH; called by shell-init hooks.
+    #[command(hide = true)]
+    Visit {
+        /// Directory the shell just entered.
+        path: PathBuf,
     },
     /// Create an empty repository at its tree location (ghq compatibility; prefer `new`).
     #[command(hide = true)]
@@ -214,7 +235,13 @@ fn run_standalone(cli: &Cli) -> Option<Result<u8>> {
             .lock()
             .write_all(include_bytes!("../docs/agents.md"))
             .map_err(|error| format!("cannot print agent guide: {error}")),
-        Commands::ShellInit { shell } => navigation::shell_init(shell),
+        Commands::ShellInit { shell, no_track } => navigation::shell_init(shell, !no_track),
+        // Runs on every directory change, so it never loads configuration and
+        // never fails the shell: a visit that cannot be recorded is dropped.
+        Commands::Visit { path } => {
+            let _ = visits::record(path);
+            Ok(())
+        }
         Commands::Completions { shell } => {
             completions::render(*shell, help::command(Cli::command()))
         }
@@ -242,6 +269,7 @@ fn run(cli: Cli) -> Result<u8> {
                 query.as_deref(),
             )?;
         }
+        Commands::Info { query, json } => return show_info(&config, query.as_deref(), json),
         Commands::List(options) => return ghq_listing::list(&config, &options),
         Commands::Root { all } => return ghq_listing::root(&config, all),
         Commands::Status {
@@ -306,10 +334,41 @@ fn run(cli: Cli) -> Result<u8> {
         Commands::Mcp
         | Commands::AgentGuide
         | Commands::ShellInit { .. }
+        | Commands::Visit { .. }
         | Commands::Completions { .. }
         | Commands::Help { .. } => {}
     }
     Ok(0)
+}
+
+fn show_info(config: &config::Config, query: Option<&str>, json: bool) -> Result<u8> {
+    let repositories = discovery::discover(config)?;
+    // Without a query, the checkout you are standing in is the natural subject.
+    let current = std::env::current_dir()
+        .ok()
+        .and_then(|directory| directory.canonicalize().ok())
+        .and_then(|directory| {
+            repositories
+                .iter()
+                .filter(|repository| directory.starts_with(&repository.path))
+                .max_by_key(|repository| repository.path.as_os_str().len())
+                .map(|repository| repository.path.clone())
+        });
+    let path = match (query, current) {
+        (None, Some(path)) => path,
+        _ => navigation::select(&repositories, &config.roots, query)?,
+    };
+    let visits = visits::load();
+    let info = info::gather(&path, visits.get(&path));
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&info).map_err(|error| error.to_string())?
+        );
+    } else {
+        print!("{}", info::render(&info, &config.roots));
+    }
+    Ok(u8::from(info.unreadable))
 }
 
 /// A path-like name means "where a clone of this would live"; a plain name is

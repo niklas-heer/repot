@@ -28,6 +28,10 @@ const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "cd [query]",
                 "Jump to a repository; opens an inline fuzzy picker",
             ),
+            (
+                "info [query]",
+                "Show branch, changes, remote and recent commits",
+            ),
             ("list [query]", "List repositories"),
             ("root", "Show where repositories live"),
         ],

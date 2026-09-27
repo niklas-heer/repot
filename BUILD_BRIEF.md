@@ -44,6 +44,7 @@ aliases (`jump`, `get`, `find`) or hidden commands (`create`, `migrate`).
 | Command | Purpose |
 | --- | --- |
 | `repot cd [query]` | Jump to a repository; inline fuzzy picker, used through the shell wrapper below |
+| `repot info [query]` | Local details of one checkout: branch, changes, remote, visits, recent commits |
 | `repot list [--json]` | Every known repository: tree, registered extras, scratch projects |
 | `repot root [--all]` | Show primary or all repository roots |
 | `repot status [--json]` | One state and one recommended action per repository, after a parallel fetch |
@@ -161,6 +162,9 @@ The delegated implementation resolved the original open questions:
 - Nucleo matching and an embedded Ratatui/Crossterm picker handle navigation.
   The picker renders inline under the prompt rather than on the alternate screen,
   so navigation never hides the user's scrollback. Exact/unique matches select directly.
+- The picker ranks by frecency from a local append-only visit log in
+  `$XDG_STATE_HOME/repot/visits`, fed by shell-integration directory hooks and
+  `repot cd`, with Git activity ordering unvisited checkouts.
 - Human output is designed for terminals and degrades for pipes: `status`/`sync`
   group checkouts by needed action with a live progress line on stderr, errors
   carry hints, and help opens with the logo, version and task-grouped commands.
