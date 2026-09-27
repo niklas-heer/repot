@@ -44,6 +44,7 @@ aliases (`jump`, `get`, `find`) or hidden commands (`create`, `migrate`).
 | Command | Purpose |
 | --- | --- |
 | `repot cd [query]` | Jump to a repository; inline fuzzy picker, used through the shell wrapper below |
+| `repot open [query]` | Open a checkout in the configured editor, or its forge page with `--web` |
 | `repot info [query]` | Local details of one checkout: branch, changes, remote, visits, recent commits |
 | `repot list [--json]` | Every known repository: tree, registered extras, scratch projects |
 | `repot root [--all]` | Show primary or all repository roots |

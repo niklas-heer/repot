@@ -196,7 +196,7 @@ end
 const NU_INIT: &str = r"# repot shell integration: lets `repot cd`, `new`, `clone` and friends change directory.
 def --env --wrapped repot [...args: string] {
     let command = ($args | where {|arg| not ($arg | str starts-with '-') } | get 0? | default '')
-    if $command in [list ls root status sync scan find restore completions shell-init mcp agent-guide help h] {
+    if $command in [list ls root status sync info doctor stale scan find restore completions shell-init mcp agent-guide help h] {
         # Reports stay attached to the terminal and remain pipeable, e.g. `repot status --json | from json`.
         ^repot ...$args
     } else {

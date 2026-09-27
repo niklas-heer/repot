@@ -8,6 +8,7 @@
 | --- | --- |
 | `repot cd [query]` | Jump to a repository; an inline fuzzy picker opens when several match |
 | `repot info [query]` | Branch, sync state, local changes, remote, visits and recent commits |
+| `repot open [query]` | Open in your editor, or the forge's web page with `--web` |
 | `repot list [query]` | List discovered and registered repositories (`ls` also works) |
 | `repot root [--all]` | Show primary or all configured roots |
 | `repot status` / `repot sync` | See what needs attention; fast-forward what is safe |
@@ -93,6 +94,12 @@ the file to forget your history.
 branch with ahead/behind counts from cached remote refs, staged, modified,
 untracked and stashed work, your visits and the five latest commits. `--json`
 gives the same data to scripts. Remote URLs never show embedded credentials.
+
+`repot open` opens the checkout you are in (or `repot open NAME`) in the editor
+named by `REPOT_EDITOR`, `VISUAL` or `EDITOR`, so a GUI editor can differ from
+your terminal editor. `repot open --web` opens the repository's page on its forge,
+on the current branch when it is not the default; `BROWSER` overrides the system
+opener. Credentials in remote URLs never reach the page URL.
 
 In terminals at least 100 columns wide, the picker shows the same details for
 the selected repository beside the results; they load in the background, so

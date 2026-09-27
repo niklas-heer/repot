@@ -189,6 +189,90 @@ mod tests {
     }
 
     #[test]
+    fn open_launches_the_editor_or_the_web_page_of_the_branch() {
+        let fixture = Fixture::new();
+        let repo = fixture.repo("host/owner/sprout");
+        let git = |args: &[&str]| {
+            let output = fixture
+                .command("git")
+                .current_dir(&repo)
+                .args(args)
+                .output()
+                .expect("git runs");
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        let recorded = fixture.directory.path().join("launched");
+        let launcher = fixture.directory.path().join("record");
+        fs::write(
+            &launcher,
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$REPOT_TEST_LAUNCHED\"\n",
+        )
+        .expect("launcher");
+        fs::set_permissions(
+            &launcher,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .expect("executable");
+        let open = |args: &[&str]| {
+            fixture
+                .command(env!("CARGO_BIN_EXE_repot"))
+                .env("REPOT_TEST_LAUNCHED", &recorded)
+                .env(
+                    "REPOT_EDITOR",
+                    format!("{} --new-window", launcher.display()),
+                )
+                .env("BROWSER", &launcher)
+                .env_remove("VISUAL")
+                .env_remove("EDITOR")
+                .args(args)
+                .output()
+                .expect("repot runs")
+        };
+        let output = open(&["open", "sprout"]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(&recorded).expect("launched"),
+            format!("--new-window\n{}\n", repo.display())
+        );
+        let without_remote = open(&["open", "sprout", "--web"]);
+        assert!(!without_remote.status.success());
+        assert!(String::from_utf8_lossy(&without_remote.stderr).contains("repot publish"));
+        git(&["commit", "--allow-empty", "-m", "base"]);
+        git(&["branch", "-M", "main"]);
+        git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://token@github.com/owner/sprout.git",
+        ]);
+        git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(&[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ]);
+        assert!(open(&["open", "sprout", "--web"]).status.success());
+        assert_eq!(
+            fs::read_to_string(&recorded).expect("launched"),
+            "https://github.com/owner/sprout\n"
+        );
+        git(&["switch", "--quiet", "--create", "feature"]);
+        assert!(open(&["open", "sprout", "--web"]).status.success());
+        assert_eq!(
+            fs::read_to_string(&recorded).expect("launched"),
+            "https://github.com/owner/sprout/tree/feature\n"
+        );
+    }
+
+    #[test]
     fn shell_hooks_track_directory_changes_unless_disabled() {
         let fixture = Fixture::new();
         let alpha = fixture.repo("host/owner/alpha");

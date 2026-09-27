@@ -32,6 +32,10 @@ const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "info [query]",
                 "Show branch, changes, remote and recent commits",
             ),
+            (
+                "open [query]",
+                "Open in your editor, or on the web with --web",
+            ),
             ("list [query]", "List repositories"),
             ("root", "Show where repositories live"),
         ],

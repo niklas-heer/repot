@@ -14,6 +14,7 @@ mod manifest;
 mod manifest_format;
 mod mcp;
 mod navigation;
+mod open;
 mod process;
 mod publish;
 mod remote_extra;
@@ -78,6 +79,8 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Open a repository in your editor, or its web page with --web.
+    Open(open::Options),
     /// List repositories in your roots and registered locations.
     #[command(alias = "ls")]
     List(ghq_listing::ListOptions),
@@ -281,6 +284,10 @@ fn run(cli: Cli) -> Result<u8> {
             )?;
         }
         Commands::Info { query, json } => return show_info(&config, query.as_deref(), json),
+        Commands::Open(options) => {
+            let path = choose(&config, options.query.as_deref())?;
+            return open::run(&path, &config.roots, options.web);
+        }
         Commands::List(options) => return ghq_listing::list(&config, &options),
         Commands::Root { all } => return ghq_listing::root(&config, all),
         Commands::Status {
@@ -356,7 +363,9 @@ fn run(cli: Cli) -> Result<u8> {
     Ok(0)
 }
 
-fn show_info(config: &config::Config, query: Option<&str>, json: bool) -> Result<u8> {
+/// The checkout a query names, or without a query the one you are standing in,
+/// or the picker.
+fn choose(config: &config::Config, query: Option<&str>) -> Result<PathBuf> {
     let repositories = discovery::discover(config)?;
     // Without a query, the checkout you are standing in is the natural subject.
     let current = std::env::current_dir()
@@ -369,10 +378,14 @@ fn show_info(config: &config::Config, query: Option<&str>, json: bool) -> Result
                 .max_by_key(|repository| repository.path.as_os_str().len())
                 .map(|repository| repository.path.clone())
         });
-    let path = match (query, current) {
-        (None, Some(path)) => path,
-        _ => navigation::select(&repositories, &config.roots, query)?,
-    };
+    match (query, current) {
+        (None, Some(path)) => Ok(path),
+        _ => navigation::select(&repositories, &config.roots, query),
+    }
+}
+
+fn show_info(config: &config::Config, query: Option<&str>, json: bool) -> Result<u8> {
+    let path = choose(config, query)?;
     let visits = visits::load();
     let info = info::gather(&path, visits.get(&path));
     if json {
