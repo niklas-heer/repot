@@ -77,6 +77,10 @@ const GROUPS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("rm <repo>", "Archive a checkout; nothing is deleted"),
             ("trash", "List or restore archived checkouts"),
+            (
+                "doctor",
+                "Find duplicates, renamed repositories and misplaced checkouts",
+            ),
         ],
     ),
     (

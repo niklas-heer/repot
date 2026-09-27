@@ -143,6 +143,15 @@ repot restore                                # clone missing manifest entries
 Restore leaves every existing destination untouched. Keep the manifest in your
 dotfiles to bring the same set of projects to another machine.
 
+### Clean up after renames
+
+```sh
+repot doctor                  # duplicates, renamed and misplaced checkouts
+```
+
+Renamed a repository on GitHub and cloned the new name? Doctor spots the stale
+copy, shows any work that exists only there, and suggests the exact command.
+
 ### Remove a checkout without losing its work
 
 ```sh

@@ -17,6 +17,7 @@
 | `repot scan [path]` / `repot adopt <path>` | Discover repositories outside the tree and bring them in |
 | `repot restore` | Clone missing entries from your manifest on a new machine |
 | `repot rm` / `repot trash` | Archive a checkout without losing work; list or restore archives |
+| `repot doctor` | Find duplicates, renamed or archived GitHub repositories and misplaced checkouts |
 | `repot shell-init <shell>` | Print shell integration so `repot cd` can change directory |
 | `repot completions <shell>` | Generate bash, zsh, fish or Nushell completions |
 | `repot agent-guide` / `repot mcp` | Guide and stdio MCP server for coding agents |
@@ -246,6 +247,33 @@ Scratch creation and relocation refuse all existing destination paths, including
 symlinks and concurrent collisions. Moves are atomic within one filesystem;
 checkouts with linked worktrees, submodules, borrowed object databases, symlinked Git metadata or separate
 worktree configuration require manual handling or registration in place.
+
+## Find duplicates and renamed repositories
+
+Renaming or transferring a repository on GitHub leaves the old checkout behind,
+and cloning the new name then gives you two copies. `repot doctor` finds that
+and other drift, and prints the command that fixes each finding. It changes
+nothing itself.
+
+```sh
+repot doctor              # asks GitHub through gh when it is installed
+repot doctor --offline    # local checks only
+repot doctor --json
+```
+
+| Finding | Meaning | Suggested fix |
+| --- | --- | --- |
+| Duplicate | Two checkouts of the same repository, also across a rename | `repot rm` the stale copy |
+| Renamed on GitHub | The remote still uses an old name or owner | `git remote set-url`, then `repot adopt` to move it |
+| Not where its remote belongs | The folder no longer matches `host/owner/name` | `repot adopt` |
+| Not found on GitHub | Deleted, or not visible to your `gh` account | `repot info` to review |
+| Archived on GitHub | Read-only upstream | `repot rm` when you no longer need it |
+
+For duplicates, the checkout already at its current name's location is kept.
+Before suggesting removal, doctor lists work that exists only in the stale copy:
+changed files, stashes, unpushed commits and linked worktrees. `repot rm`
+archives the entire checkout, so `repot trash restore` can bring it back. Doctor
+exits 3 when it has findings and 0 when everything is where it belongs.
 
 ## Scan, adopt and restore
 

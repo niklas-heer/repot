@@ -3,6 +3,7 @@
 mod completions;
 mod config;
 mod discovery;
+mod doctor;
 mod get;
 mod ghq_listing;
 mod git_read;
@@ -157,6 +158,9 @@ enum Commands {
     },
     /// Archive a checkout out of the tree; `repot trash` brings it back.
     Rm(repository_ops::RemoveOptions),
+    /// Find duplicates, renamed or archived GitHub repositories, and misplaced
+    /// checkouts, with the command that fixes each. Changes nothing.
+    Doctor(doctor::Options),
     /// List or restore checkouts archived by `repot rm`.
     Trash {
         #[command(subcommand)]
@@ -329,6 +333,7 @@ fn run(cli: Cli) -> Result<u8> {
         }
         Commands::Rm(options) => return repository_ops::remove(&config, &options),
         Commands::Trash { command } => return repository_ops::trash(&config, &command),
+        Commands::Doctor(options) => return doctor::run(&config, &options),
         Commands::Create(options) => return get::create(&config, &options),
         Commands::Migrate(options) => return repository_ops::migrate(&config, &options),
         Commands::Mcp
