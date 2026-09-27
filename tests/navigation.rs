@@ -195,6 +195,10 @@ mod tests {
         let git = |args: &[&str]| {
             let output = fixture
                 .command("git")
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.invalid")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.invalid")
                 .current_dir(&repo)
                 .args(args)
                 .output()
