@@ -50,6 +50,16 @@ selection, cancellation, resizing, terminal restoration and shell handoffs.
 Manifest editing runs seeded sequences against TOML, KDL and YAML, including
 concurrent registration, external edits, malformed input and recovery.
 
+## Recording the demo
+
+The README animation is recorded with [VHS](https://github.com/charmbracelet/vhs)
+from [`demo/repot.tape`](../demo/repot.tape). Install VHS (`brew install vhs`), then
+run `mise run demo` to build repot and rewrite `demo/repot.gif`.
+[`demo/setup.sh`](../demo/setup.sh) first creates a throwaway home under `/tmp`
+whose `git@github.com:` remotes are local bare repositories reached through a
+stand-in `ssh`, so the recording never touches your checkouts or the network and
+shows the same states every time. Rerecord after visible terminal changes.
+
 ## Preparing a release
 
 Keep the Cargo package version and lockfile aligned, write

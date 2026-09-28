@@ -10,17 +10,31 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/niklas-heer/repot" alt="MIT license"></a>
 </p>
 
-<p align="center"><a href="#install">Install</a> · <a href="#quick-start">Quick start</a> · <a href="docs/guide.md">User guide</a> · <a href="docs/configuration.md">Configuration</a></p>
+<p align="center"><a href="#install">Install</a> · <a href="#quick-start">Quick start</a> · <a href="#repot-and-ghq">repot and ghq</a> · <a href="docs/guide.md">User guide</a> · <a href="docs/configuration.md">Configuration</a></p>
+
+<p align="center"><img src="demo/repot.gif" width="860" alt="repot status groups ten checkouts by what they need, repot sync fast-forwards four of them and returns a squash-merged branch to main, the inline picker previews and jumps to a repository, and repot clone brings in a new one"></p>
 
 ---
 
-repot gives your repositories a home: `<root>/<host>/<owner>/<repo>`. Clone a
-project, `repot cd` to it with the built-in fuzzy picker, and safely bring your
-checkouts up to date. Start an experiment locally, publish it when it's ready,
-and restore the projects you care about on your next machine.
+You have dozens of checkouts, and several coding agents working in them. Which
+ones are behind? Which branch was merged last week? Where did that prototype go?
+repot gives every repository a home, `<root>/<host>/<owner>/<repo>`, and keeps
+the whole tree current without ever risking your work.
+
+- **Jump anywhere.** `repot cd` opens a fuzzy picker right under your prompt,
+  ranked by how often and how recently you went there, with a live preview.
+- **See everything at once.** `repot status` fetches all checkouts in parallel
+  and groups them by what they need: update, push or review.
+- **Update safely.** `repot sync` fast-forwards what is clean and returns merged
+  branches to `main`, including squash and rebase merges.
+- **Start scratch, publish later.** `repot new` starts locally; `repot publish`
+  creates the GitHub or GitLab remote, pushes and moves it into the tree.
+- **Take it with you.** A TOML, KDL or YAML manifest restores the same projects
+  on your next machine.
 
 Already use [ghq](https://github.com/x-motemen/ghq)? Your existing tree and Git
 configuration work as they are. Neither ghq nor fzf is required.
+[How they compare →](#repot-and-ghq)
 
 **Your work stays yours.** Updates are fast-forward only. Dirty or diverged
 checkouts need review. repot never commits, stashes, resets, rebases or force-pushes,
@@ -227,6 +241,41 @@ Run `repot agent-guide` for an offline guide to noninteractive commands, JSON
 reports, exit codes and safe automation. Agents can also connect through the
 local stdio MCP server with `repot mcp`. See the [agent guide](docs/agents.md) for
 client setup and how to plan, apply and verify changes.
+
+## repot and ghq
+
+repot started as a replacement for [ghq](https://github.com/x-motemen/ghq)'s Git
+workflows. It keeps ghq's directory layout, `GHQ_ROOT`, the `ghq.*` Git settings
+and its command names (`get`, `create` and `migrate` still work), so it
+picks up your existing tree as it is. Where ghq manages clones, repot also looks
+after what happens to them afterwards.
+
+| | ghq | repot |
+| --- | --- | --- |
+| Tree layout and root settings | `<root>/<host>/<owner>/<repo>` | The same tree and settings |
+| Jump to a repository | Pipe `ghq list` into fzf or peco | Built-in picker with preview, ranked by use |
+| What needs attention? | Not covered | `status`: one parallel fetch, grouped by next step |
+| Update checkouts | `ghq get -u` on the repositories you name | `sync`: everything at once, fast-forward only, merged branches return to `main` |
+| New projects | `create` initializes one in the tree | `new` starts a scratch project, optionally from a template; `publish` creates the remote and moves it in |
+| Stray checkouts | `migrate` moves one you point at | `scan` finds them; `adopt` moves or registers them in place |
+| New machine | `ghq list` into a file, then `ghq get` | A manifest and `restore`, including checkouts outside the tree |
+| Removing | Deletes the checkout | Archives it with stashes, index and ignored files; `trash restore` |
+| Housekeeping | Not covered | `doctor` for duplicates and renames; `stale` for forgotten checkouts |
+| Automation | Plain text | `--json`, documented exit codes, an agent guide and an MCP server |
+| Version control | Git, Subversion, Mercurial, Darcs, Fossil, Bazaar | Git only |
+| Platforms | Linux, macOS, Windows | Linux and macOS |
+
+**Choose ghq** if you need Subversion, Mercurial or another non-Git backend, work
+on Windows, or prefer a tool that does one job and leaves the rest to your own
+scripts. It is mature, widely packaged and has more than a decade of use
+behind it.
+
+**Choose repot** if you want the whole loop in one binary: find, update, start,
+publish, clean up and restore, with safety checks between you and a lost commit.
+Listing is also a little faster than ghq's in the
+[reproducible benchmarks](docs/benchmarks/README.md).
+
+Both can live side by side on the same tree, so trying repot costs nothing.
 
 ## Explore further
 

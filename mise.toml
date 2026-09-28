@@ -65,6 +65,11 @@ description = "Build and archive the native executable in dist/"
 depends = ["build"]
 run = "sh scripts/package.sh"
 
+[tasks.demo]
+description = "Record demo/repot.gif with VHS (requires vhs)"
+depends = ["build"]
+run = "vhs demo/repot.tape"
+
 [tasks."nix-check"]
 description = "Build and test the source package with locked Nix inputs"
 run = "nix flake check --print-build-logs"
