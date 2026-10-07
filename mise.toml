@@ -60,6 +60,14 @@ run = [
 description = "Build the optimized CLI with overflow checks"
 run = "cargo build --locked --release"
 
+[tasks.clean]
+description = "Remove all local build output (target/ and dist/)"
+run = ["cargo clean", "rm -rf dist"]
+
+[tasks."clean-debug"]
+description = "Remove debug builds and test binaries; keep release builds"
+run = "cargo clean --profile dev"
+
 [tasks.package]
 description = "Build and archive the native executable in dist/"
 depends = ["build"]
