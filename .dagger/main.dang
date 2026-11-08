@@ -34,6 +34,8 @@ type RepotCi {
       .withFile("mise.toml", source.file("mise.toml"))
       .withFile("mise.lock", source.file("mise.lock"))
       .withFile("rust-toolchain.toml", source.file("rust-toolchain.toml"))
+      # zsh comes from Debian; bash ships with the image; fish and nu come from mise.
+      .withExec(["sh", "-c", "apt-get update && apt-get install -y --no-install-recommends zsh && rm -rf /var/lib/apt/lists/*"])
       .withExec(["mise", "install", "rust", "github:nextest-rs/nextest", "aqua:nushell/nushell", "aqua:fish-shell/fish-shell"])
       .withEnvVariable("MISE_AUTO_INSTALL", "false")
       .withDirectory("/src", source)
