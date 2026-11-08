@@ -125,6 +125,12 @@ source repot.nu
 
 Regenerate the file after upgrading repot to pick up wrapper changes.
 
+Nushell treats a non-zero exit as an error, so a report command that exits 3 (review
+needed) stops a script. Read the exact status with `repot status --json | complete`.
+Commands that can change directory (`cd`, `clone`, `new`, `publish`, `adopt`, `create`,
+`trash restore`) return their output as a value: nu prints it at the prompt and `let`
+captures it, but a script must `print` it to show it.
+
 ### Completions
 
 `repot completions bash`, `zsh`, `fish` or `nu` prints the corresponding completion

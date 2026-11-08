@@ -8,6 +8,9 @@ dagger = "0.21.9"
 "github:nextest-rs/nextest" = { version = "0.9.144", version_prefix = "cargo-nextest-" }
 "cargo:bacon" = "3.25.0"
 "github:watchexec/watchexec" = "2.7.2"
+# Shells exercised by the shell-integration tests (REPOT_REQUIRE_SHELLS=1 makes them mandatory).
+"aqua:nushell/nushell" = "0.116.1"
+"aqua:fish-shell/fish-shell" = { version = "4.9.3", bin_path = "{% if os() == 'linux' %}.{% else %}fish.pkg/Payload/usr/local/bin{% endif %}" }
 
 [tasks.fmt]
 description = "Check Rust formatting"
@@ -49,6 +52,7 @@ run = "dagger call ci"
 
 [tasks."ci-native"]
 description = "Run all quality gates on the host; also used inside Dagger"
+env = { REPOT_REQUIRE_SHELLS = "1" }
 run = [
   "mise run fmt",
   "mise run check",

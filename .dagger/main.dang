@@ -34,7 +34,7 @@ type RepotCi {
       .withFile("mise.toml", source.file("mise.toml"))
       .withFile("mise.lock", source.file("mise.lock"))
       .withFile("rust-toolchain.toml", source.file("rust-toolchain.toml"))
-      .withExec(["mise", "install", "rust", "github:nextest-rs/nextest"])
+      .withExec(["mise", "install", "rust", "github:nextest-rs/nextest", "aqua:nushell/nushell", "aqua:fish-shell/fish-shell"])
       .withEnvVariable("MISE_AUTO_INSTALL", "false")
       .withDirectory("/src", source)
       .withMountedCache("/usr/local/cargo/registry", cacheVolume("repot-cargo-registry"))

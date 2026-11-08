@@ -254,7 +254,9 @@ return. Existing feature branches and their commits are retained.
 
 Exit codes: `0` completed, `1` operational failure, `2` invalid usage (including a
 status or sync query that matches no repository), `3` manual review or push
-needed. Failures take precedence over review in a mixed batch.
+needed. Failures take precedence over review in a mixed batch. In Nushell, read
+exit code 3 with `repot status --json | complete`, because nu raises a non-zero
+exit as an error.
 
 ## Scratch projects and publishing
 

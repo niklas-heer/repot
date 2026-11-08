@@ -2,6 +2,84 @@
 
 lockfile_version = 1
 
+[[tools."aqua:fish-shell/fish-shell"]]
+version = "4.9.3"
+backend = "aqua:fish-shell/fish-shell"
+specifiers = ["4.9.3"]
+
+[tools."aqua:fish-shell/fish-shell".options]
+"vars.bin_path" = "fish.pkg/Payload/usr/local/bin"
+
+[tools."aqua:fish-shell/fish-shell"."platforms.linux-arm64"]
+checksum = "sha256:57349f0111728c64b703a84e611aa97ff4d1fa8466385d64e67bd5bc3ffa49fc"
+url = "https://github.com/fish-shell/fish-shell/releases/download/4.9.3/fish-4.9.3-linux-aarch64.tar.xz"
+url_api = "https://api.github.com/repos/fish-shell/fish-shell/releases/assets/551107872"
+
+[tools."aqua:fish-shell/fish-shell"."platforms.linux-arm64-musl"]
+checksum = "sha256:57349f0111728c64b703a84e611aa97ff4d1fa8466385d64e67bd5bc3ffa49fc"
+url = "https://github.com/fish-shell/fish-shell/releases/download/4.9.3/fish-4.9.3-linux-aarch64.tar.xz"
+url_api = "https://api.github.com/repos/fish-shell/fish-shell/releases/assets/551107872"
+
+[tools."aqua:fish-shell/fish-shell"."platforms.linux-x64"]
+checksum = "sha256:8f643d10ad1abb0ef7072764c01ceb5cf61b2d373fda400cf60f0bad69b7e095"
+url = "https://github.com/fish-shell/fish-shell/releases/download/4.9.3/fish-4.9.3-linux-x86_64.tar.xz"
+url_api = "https://api.github.com/repos/fish-shell/fish-shell/releases/assets/551107873"
+
+[tools."aqua:fish-shell/fish-shell"."platforms.linux-x64-musl"]
+checksum = "sha256:8f643d10ad1abb0ef7072764c01ceb5cf61b2d373fda400cf60f0bad69b7e095"
+url = "https://github.com/fish-shell/fish-shell/releases/download/4.9.3/fish-4.9.3-linux-x86_64.tar.xz"
+url_api = "https://api.github.com/repos/fish-shell/fish-shell/releases/assets/551107873"
+
+[tools."aqua:fish-shell/fish-shell"."platforms.macos-arm64"]
+checksum = "sha256:fb489929e25e66b8c026a1da8935f68f828134e115a1706f360ed73149b843a9"
+url = "https://github.com/fish-shell/fish-shell/releases/download/4.9.3/fish-4.9.3.pkg"
+url_api = "https://api.github.com/repos/fish-shell/fish-shell/releases/assets/551147059"
+
+[tools."aqua:fish-shell/fish-shell"."platforms.macos-x64"]
+checksum = "sha256:fb489929e25e66b8c026a1da8935f68f828134e115a1706f360ed73149b843a9"
+url = "https://github.com/fish-shell/fish-shell/releases/download/4.9.3/fish-4.9.3.pkg"
+url_api = "https://api.github.com/repos/fish-shell/fish-shell/releases/assets/551147059"
+
+[[tools."aqua:nushell/nushell"]]
+version = "0.116.1"
+backend = "aqua:nushell/nushell"
+specifiers = ["0.116.1"]
+
+[tools."aqua:nushell/nushell"."platforms.linux-arm64"]
+checksum = "sha256:e7bbb1639253fb83e2391600b957ba3e918f04a2c81850e9f30a68cb1ef20ef8"
+url = "https://github.com/nushell/nushell/releases/download/0.116.1/nu-0.116.1-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/nushell/nushell/releases/assets/610027667"
+
+[tools."aqua:nushell/nushell"."platforms.linux-arm64-musl"]
+checksum = "sha256:b103770c00bf322c409caa007aad44882d1cc5d24d82f719f877812ac33d6ad1"
+url = "https://github.com/nushell/nushell/releases/download/0.116.1/nu-0.116.1-aarch64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/nushell/nushell/releases/assets/610022369"
+
+[tools."aqua:nushell/nushell"."platforms.linux-x64"]
+checksum = "sha256:d6d8ace4be491ed8abba4026e73b60c0470b4671d7039307e7d772282ef863da"
+url = "https://github.com/nushell/nushell/releases/download/0.116.1/nu-0.116.1-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/nushell/nushell/releases/assets/610020338"
+
+[tools."aqua:nushell/nushell"."platforms.linux-x64-musl"]
+checksum = "sha256:13ef75df08df30f8d7b031df538e82a52c6e74ce839b1a9091c3a3f1969c3742"
+url = "https://github.com/nushell/nushell/releases/download/0.116.1/nu-0.116.1-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/nushell/nushell/releases/assets/610034802"
+
+[tools."aqua:nushell/nushell"."platforms.macos-arm64"]
+checksum = "sha256:302fb3dfc5d44e7fe0d5b8227be8e75b4c3956ca8d4804234e5c68fbdd3e4917"
+url = "https://github.com/nushell/nushell/releases/download/0.116.1/nu-0.116.1-aarch64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/nushell/nushell/releases/assets/610028991"
+
+[tools."aqua:nushell/nushell"."platforms.macos-x64"]
+checksum = "sha256:44306f0766f2be0e763d0c7a6a6774537589a335797a199d8e5b473d766ec6bd"
+url = "https://github.com/nushell/nushell/releases/download/0.116.1/nu-0.116.1-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/nushell/nushell/releases/assets/610039812"
+
+[tools."aqua:nushell/nushell"."platforms.windows-x64"]
+checksum = "sha256:6658c9e61fe42c88326c1caa99e8dc9ad99bec6c0bc353e6ecb7c5d3f79feed7"
+url = "https://github.com/nushell/nushell/releases/download/0.116.1/nu-0.116.1-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/nushell/nushell/releases/assets/610069956"
+
 [[tools."cargo:bacon"]]
 version = "3.25.0"
 backend = "cargo:bacon"
