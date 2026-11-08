@@ -979,4 +979,91 @@ mod tests {
             assert_eq!(visits(&fixture), [alpha.to_string_lossy()], "{shell}");
         }
     }
+
+    #[test]
+    fn every_unique_name_from_list_selects_its_own_repository() {
+        let fixture = Fixture::new();
+        let expected = [
+            ("alpha", fixture.repo("github.com/owner/alpha")),
+            ("alphabet", fixture.repo("github.com/owner/alphabet")),
+            ("beta", fixture.repo("github.com/owner/beta")),
+            ("my repo", fixture.repo("github.com/other/my repo")),
+        ];
+        let listed = fixture.repot(&["list", "--unique"]);
+        assert!(listed.status.success());
+        let names: Vec<_> = String::from_utf8_lossy(&listed.stdout)
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(names.len(), expected.len());
+        for name in names {
+            let output = fixture.repot(&["cd", &name]);
+            assert!(output.status.success(), "{name}");
+            let selected = String::from_utf8_lossy(&output.stdout)
+                .trim_end()
+                .to_owned();
+            assert!(
+                expected
+                    .iter()
+                    .any(|(wanted, path)| *wanted == name && path.to_string_lossy() == selected),
+                "{name} selected {selected}"
+            );
+        }
+    }
+
+    /// Lists repository names through the nushell completer defined by shell-init
+    /// and the generated completions, sourced in both orders, then changes
+    /// directory with `repot cd`.
+    #[test]
+    fn nushell_completer_names_load_in_either_order_and_cd_still_works() {
+        if !shell_available("nu") {
+            return;
+        }
+        let fixture = Fixture::new();
+        let alpha = fixture.repo("github.com/owner/alpha");
+        fixture.repo("github.com/owner/alphabet");
+        fixture.repo("github.com/owner/beta");
+        fixture.repo("github.com/other/my repo");
+        let init = fixture.write("init.nu", fixture.repot(&["shell-init", "nu"]).stdout);
+        let completions = fixture.write(
+            "completions.nu",
+            fixture.repot(&["completions", "nu"]).stdout,
+        );
+        for (label, first, second) in [
+            ("init first", &init, &completions),
+            ("completions first", &completions, &init),
+        ] {
+            let script = fixture.write(
+                &format!("nu-{}.nu", label.replace(' ', "-")),
+                format!(
+                    "source \"{}\"\nsource \"{}\"\nfor name in (__repot_repos) {{ print $name }}\nrepot cd alpha\nprint $env.PWD\n",
+                    first.display(),
+                    second.display()
+                ),
+            );
+            let output = fixture
+                .shell("nu")
+                .arg("--no-config-file")
+                .arg(&script)
+                .output()
+                .expect("nu runs");
+            assert!(
+                output.status.success(),
+                "{label}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let text = String::from_utf8(output.stdout).expect("nu output UTF-8");
+            let lines: Vec<_> = text.lines().collect();
+            assert_eq!(
+                lines[..4],
+                ["alpha", "alphabet", "beta", "my repo"],
+                "{label}"
+            );
+            assert_eq!(
+                lines.get(4).map(|line| line.trim_end_matches("/.")),
+                Some(alpha.to_str().expect("UTF-8 path")),
+                "{label}"
+            );
+        }
+    }
 }

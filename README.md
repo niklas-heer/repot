@@ -79,7 +79,7 @@ Add the line for your shell to its configuration, then reload it:
 
 The wrapper lets `cd`, `new` and other relocation commands change your shell's
 directory. Without it, repot prints the selected path. Completions are available
-for all four shells with `repot completions <shell>`.
+for all four shells with `repot completions <shell>`, including repository names for `cd`, `info`, `open` and `rm`.
 
 ## Quick start
 

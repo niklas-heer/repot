@@ -298,17 +298,31 @@ def --env __repot_handoff [args: list<string>] {
 }
 "#;
 
+/// Repository names for Tab completion, shared by shell-init and the generated
+/// completions module. Failures yield no names, so Tab stays quiet.
+pub const NU_REPO_NAMES: &str =
+    "def __repot_repos [] { try { ^repot list --unique err> /dev/null | lines } catch { [] } }";
+
 fn nu_init() -> String {
     let mut script = String::from(NU_INIT);
+    script.push_str(NU_REPO_NAMES);
+    script.push('\n');
     for name in NU_HANDOFF {
         let words = name
             .split(' ')
             .map(|word| format!("'{word}'"))
             .collect::<Vec<_>>();
-        script.push_str(&format!(
-            "def --env --wrapped \"repot {name}\" [...args: string] {{ __repot_handoff [{} ...$args] }}\n",
+        // `cd` and `jump` take a repository query; the other handoffs take paths or new names.
+        let completer = if matches!(*name, "cd" | "jump") {
+            "@__repot_repos"
+        } else {
+            ""
+        };
+        let wrapper = format!(
+            "def --env --wrapped \"repot {name}\" [...args: string{completer}] {{ __repot_handoff [{} ...$args] }}\n",
             words.join(" ")
-        ));
+        );
+        script.push_str(&wrapper);
     }
     script
 }

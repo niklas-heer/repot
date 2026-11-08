@@ -142,3 +142,8 @@ example, in Bash:
 ```sh
 eval "$(repot completions bash)"
 ```
+
+Tab also completes repository names for the query of `repot cd` (and `jump`),
+`info`, `open` and `rm`. The names come from `repot list --unique`, a local listing
+that never touches the network; if it fails, no names are offered and nothing is
+printed. Global `--manifest` is not used for these names.
