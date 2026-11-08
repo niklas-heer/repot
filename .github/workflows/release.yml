@@ -51,8 +51,12 @@ jobs:
       - uses: jdx/mise-action@v4.3.0
         with:
           version: "2026.9.5"
-          install_args: "rust github:nextest-rs/nextest aqua:nushell/nushell aqua:fish-shell/fish-shell"
+          install_args: "rust github:nextest-rs/nextest aqua:nushell/nushell"
           cache: true
+      # fish's locked bin_path is the macOS value, so a locked install rejects it
+      # on Linux; install it like the Dagger image does.
+      - name: Install fish
+        run: mise install aqua:fish-shell/fish-shell
       - run: mise run ci-native
       - run: mise run build
       - name: Verify tag and create native archive
