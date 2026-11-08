@@ -59,6 +59,74 @@ mod tests {
                 .output()
                 .expect("repot runs")
         }
+
+        /// Writes a script or init file into the temporary home and returns its path.
+        fn write(&self, name: &str, body: impl AsRef<[u8]>) -> PathBuf {
+            let path = self.directory.path().join(name);
+            fs::write(&path, body).expect("test file");
+            path
+        }
+
+        /// A command for `program` with the repot binary first on PATH, so scripts can call it.
+        fn shell(&self, program: &str) -> Command {
+            let mut command = self.command(program);
+            command.env("PATH", repot_path());
+            command
+        }
+    }
+
+    /// Shell tests are mandatory when `REPOT_REQUIRE_SHELLS=1` (set by `mise run ci-native`).
+    fn shell_available(shell: &str) -> bool {
+        if Command::new(shell).arg("--version").output().is_ok() {
+            return true;
+        }
+        assert!(
+            env::var("REPOT_REQUIRE_SHELLS").as_deref() != Ok("1"),
+            "{shell} is required because REPOT_REQUIRE_SHELLS=1"
+        );
+        eprintln!("skipping optional {shell} shell: executable unavailable");
+        false
+    }
+
+    fn repot_path() -> std::ffi::OsString {
+        let binary_dir = Path::new(env!("CARGO_BIN_EXE_repot"))
+            .parent()
+            .expect("binary directory")
+            .to_path_buf();
+        env::join_paths(
+            std::iter::once(binary_dir)
+                .chain(env::split_paths(&env::var_os("PATH").unwrap_or_default())),
+        )
+        .expect("test PATH")
+    }
+
+    /// Points `https://example.test/team/cloned` at an empty local bare remote.
+    fn rewrite_example_remote(fixture: &Fixture) -> PathBuf {
+        let remote = fixture.directory.path().join("remote");
+        assert!(
+            fixture
+                .command("git")
+                .args(["init", "--bare", "--quiet"])
+                .arg(&remote)
+                .status()
+                .expect("bare init")
+                .success()
+        );
+        let rewrite = format!("url.file://{}.insteadOf", remote.display());
+        assert!(
+            fixture
+                .command("git")
+                .args([
+                    "config",
+                    "--global",
+                    &rewrite,
+                    "https://example.test/team/cloned"
+                ])
+                .status()
+                .expect("URL rewrite")
+                .success()
+        );
+        remote
     }
 
     #[test]
@@ -284,8 +352,7 @@ mod tests {
         // zsh and fish fire their hooks in scripts; bash and Nushell hooks run
         // at the interactive prompt and are covered by their own init scripts.
         for shell in ["zsh", "fish"] {
-            if Command::new(shell).arg("--version").output().is_err() {
-                eprintln!("skipping {shell}: executable unavailable");
+            if !shell_available(shell) {
                 continue;
             }
             let _ = fs::remove_dir_all(fixture.directory.path().join("state"));
@@ -377,8 +444,7 @@ mod tests {
     }
 
     fn shell_test(shell: &str) {
-        if Command::new(shell).arg("--version").output().is_err() {
-            eprintln!("skipping optional {shell} shell: executable unavailable");
+        if !shell_available(shell) {
             return;
         }
         let fixture = Fixture::new();
@@ -387,7 +453,7 @@ mod tests {
         assert!(init.status.success());
         let mut script = String::from_utf8(init.stdout).expect("shell script UTF-8");
         script.push_str(match shell {
-        "nu" => "\nrepot jump; $env.PWD | save --force $env.REPOT_TEST_RESULT; repot jump zzzzzzzzzzzzzzzzzzzz; $env.LAST_EXIT_CODE | into string | save --force $env.REPOT_TEST_STATUS\n",
+        "nu" => "\nrepot jump; $env.PWD | save --force $env.REPOT_TEST_RESULT\ntry { repot jump zzzzzzzzzzzzzzzzzzzz } catch { '1' | save --force $env.REPOT_TEST_STATUS }\n",
         "fish" => "\nrepot jump; printf '%s' \"$PWD\" > \"$REPOT_TEST_RESULT\"; repot jump zzzzzzzzzzzzzzzzzzzz; printf '%s' $status > \"$REPOT_TEST_STATUS\"\n",
         _ => "\nrepot jump; printf '%s' \"$PWD\" > \"$REPOT_TEST_RESULT\"; repot jump zzzzzzzzzzzzzzzzzzzz; printf '%s' \"$?\" > \"$REPOT_TEST_STATUS\"\n",
     });
@@ -463,36 +529,12 @@ mod tests {
         let report: serde_json::Value =
             serde_json::from_slice(&archived.stdout).expect("archive report");
         let id = report[0]["id"].as_str().expect("archive ID").to_owned();
-        let remote = fixture.directory.path().join("remote");
-        assert!(
-            fixture
-                .command("git")
-                .args(["init", "--bare", "--quiet"])
-                .arg(&remote)
-                .status()
-                .expect("bare init")
-                .success()
-        );
-        let rewrite = format!("url.file://{}.insteadOf", remote.display());
-        assert!(
-            fixture
-                .command("git")
-                .args([
-                    "config",
-                    "--global",
-                    &rewrite,
-                    "https://example.test/team/cloned"
-                ])
-                .status()
-                .expect("URL rewrite")
-                .success()
-        );
+        rewrite_example_remote(fixture);
         id
     }
 
     fn mutation_shell_test(shell: &str) {
-        if Command::new(shell).arg("--version").output().is_err() {
-            eprintln!("skipping optional {shell} shell: executable unavailable");
+        if !shell_available(shell) {
             return;
         }
         let fixture = Fixture::new();
@@ -592,5 +634,349 @@ mod tests {
     #[test]
     fn nushell_follows_create_clone_and_restore_handoffs() {
         mutation_shell_test("nu");
+    }
+
+    /// Writes the nu init and completion files for this repot binary.
+    fn nu_files(fixture: &Fixture) -> (PathBuf, PathBuf) {
+        let init = fixture.repot(&["shell-init", "nu"]);
+        assert!(init.status.success());
+        let completions = fixture.repot(&["completions", "nu"]);
+        assert!(completions.status.success());
+        (
+            fixture.write("nu-init.nu", init.stdout),
+            fixture.write("nu-completions.nu", completions.stdout),
+        )
+    }
+
+    fn nu_script(fixture: &Fixture, name: &str, body: &str) -> PathBuf {
+        fixture.write(name, body)
+    }
+
+    fn nu_run(fixture: &Fixture, script: &Path) -> Output {
+        fixture
+            .shell("nu")
+            .arg("--no-config-file")
+            .arg(script)
+            .output()
+            .expect("nu runs")
+    }
+
+    fn assert_success(output: &Output, label: &str) {
+        assert!(
+            output.status.success(),
+            "{label}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn nushell_wrapper_changes_directory_whichever_file_is_sourced_first() {
+        if !shell_available("nu") {
+            return;
+        }
+        let fixture = Fixture::new();
+        let wanted = fixture.repo("host/owner/alpha");
+        let (init, completions) = nu_files(&fixture);
+        for (name, first, second) in [
+            ("init-first", &init, &completions),
+            ("completions-first", &completions, &init),
+        ] {
+            let result = fixture.directory.path().join(format!("{name}.result"));
+            let script = nu_script(
+                &fixture,
+                &format!("{name}.nu"),
+                &format!(
+                    "source '{}'\nsource '{}'\nrepot cd alpha\n$env.PWD | save --force '{}'\n",
+                    first.display(),
+                    second.display(),
+                    result.display()
+                ),
+            );
+            let output = nu_run(&fixture, &script);
+            assert_success(&output, name);
+            assert_eq!(
+                fs::read_to_string(&result).expect("directory"),
+                wanted.to_string_lossy(),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn nushell_wrapper_recovers_after_a_failed_call_in_a_script_and_with_nu_c() {
+        if !shell_available("nu") {
+            return;
+        }
+        let fixture = Fixture::new();
+        let wanted = fixture.repo("host/owner/alpha");
+        let (init, _) = nu_files(&fixture);
+        let result = fixture.directory.path().join("recovered");
+        let script = nu_script(
+            &fixture,
+            "recover.nu",
+            &format!(
+                "source '{}'\ntry {{ repot cd zzzzzzzzzzzzzzzz }} catch {{ print failed }}\nrepot cd alpha\n$env.PWD | save --force '{}'\n",
+                init.display(),
+                result.display()
+            ),
+        );
+        let output = nu_run(&fixture, &script);
+        assert_success(&output, "script");
+        assert!(String::from_utf8_lossy(&output.stdout).contains("failed"));
+        assert_eq!(
+            fs::read_to_string(&result).expect("directory"),
+            wanted.to_string_lossy()
+        );
+
+        // With `nu -c` there is no earlier command to supply an exit status.
+        fs::remove_file(&result).expect("reset result");
+        let command = format!(
+            "source '{}'; try {{ repot cd zzzzzzzzzzzzzzzz }} catch {{ print failed }}; repot cd alpha; $env.PWD | save --force '{}'",
+            init.display(),
+            result.display()
+        );
+        let output = fixture
+            .shell("nu")
+            .args(["--no-config-file", "-c", &command])
+            .output()
+            .expect("nu -c runs");
+        assert_success(&output, "nu -c");
+        assert_eq!(
+            fs::read_to_string(&result).expect("directory"),
+            wanted.to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn nushell_returns_output_of_wrapped_and_plain_commands() {
+        if !shell_available("nu") {
+            return;
+        }
+        let fixture = Fixture::new();
+        fixture.repo("host/owner/alpha");
+        rewrite_example_remote(&fixture);
+        let (init, _) = nu_files(&fixture);
+        let result = fixture.directory.path().join("fetched.json");
+        let script = nu_script(
+            &fixture,
+            "capture.nu",
+            &format!(
+                "source '{init}'\nlet listed = (repot list --json | from json)\nlet trash = (repot trash list --json | from json)\nlet fetched = (repot get --look --json example.test/team/cloned | from json)\n$fetched | to json | save --force '{result}'\nprint ($listed | length)\nprint ($trash | length)\n",
+                init = init.display(),
+                result = result.display()
+            ),
+        );
+        let output = nu_run(&fixture, &script);
+        assert_success(&output, "capture");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "1\n0\n");
+        let fetched = fs::read_to_string(&result).expect("fetched report");
+        assert!(fetched.contains("example.test/team/cloned"), "{fetched}");
+    }
+
+    #[test]
+    fn nushell_reads_exit_status_with_complete() {
+        if !shell_available("nu") {
+            return;
+        }
+        let fixture = Fixture::new();
+        let (init, _) = nu_files(&fixture);
+        let result = fixture.directory.path().join("status");
+        let script = nu_script(
+            &fixture,
+            "complete.nu",
+            &format!(
+                "source '{}'\nlet report = (repot info zzzzzzzz | complete)\n$report.exit_code | into string | save --force '{}'\n",
+                init.display(),
+                result.display()
+            ),
+        );
+        let output = nu_run(&fixture, &script);
+        assert_success(&output, "complete");
+        let status = fs::read_to_string(&result).expect("status");
+        assert_ne!(status, "0", "a failing report reports its status");
+    }
+
+    #[test]
+    fn nushell_finds_the_subcommand_after_global_options() {
+        if !shell_available("nu") {
+            return;
+        }
+        let fixture = Fixture::new();
+        let wanted = fixture.repo("host/owner/alpha");
+        let (init, _) = nu_files(&fixture);
+        // A manifest named like a report command must not change how the call is routed.
+        let manifest = fixture.write("status", "");
+        let result = fixture.directory.path().join("manifest-result");
+        let script = nu_script(
+            &fixture,
+            "manifest.nu",
+            &format!(
+                "source '{}'\nrepot --manifest '{}' cd alpha\n$env.PWD | save --force '{}'\n",
+                init.display(),
+                manifest.display(),
+                result.display()
+            ),
+        );
+        let output = nu_run(&fixture, &script);
+        assert_success(&output, "manifest");
+        assert_eq!(
+            fs::read_to_string(&result).expect("directory"),
+            wanted.to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn nushell_visit_hook_is_not_added_again_when_reloaded() {
+        if !shell_available("nu") {
+            return;
+        }
+        let fixture = Fixture::new();
+        let (init, _) = nu_files(&fixture);
+        let script = nu_script(
+            &fixture,
+            "reload.nu",
+            &format!(
+                "source '{init}'\nsource '{init}'\nprint ($env.config.hooks.env_change.PWD? | default [] | length)\n",
+                init = init.display()
+            ),
+        );
+        let output = nu_run(&fixture, &script);
+        assert_success(&output, "reload");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "1\n");
+    }
+
+    #[test]
+    fn bash_visit_hook_passes_the_previous_status_to_prompt_commands() {
+        if !shell_available("bash") {
+            return;
+        }
+        let fixture = Fixture::new();
+        let init = fixture.repot(&["shell-init", "bash"]);
+        assert!(init.status.success());
+        let init = fixture.write("bash-init.sh", init.stdout);
+        let status = fixture.directory.path().join("prompt-status");
+        let listing = fixture.directory.path().join("prompt-listing");
+        let prompt = format!("printf \"%s\" \"$?\" > \"{}\"", status.display());
+        // Bash 5.1 introduced array PROMPT_COMMAND; older versions only have the string form.
+        let arrays = Command::new("bash")
+            .args([
+                "-c",
+                "((BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 1)))",
+            ])
+            .status()
+            .expect("bash version")
+            .success();
+        let mut cases = vec![(
+            "string",
+            format!(
+                "PROMPT_COMMAND='{prompt}'\nsource '{init}'\nsource '{init}'\nprintf '%s' \"$PROMPT_COMMAND\" > '{listing}'\nfalse\neval \"$PROMPT_COMMAND\"\n",
+                init = init.display(),
+                listing = listing.display()
+            ),
+        )];
+        if arrays {
+            cases.push((
+                "array",
+                format!(
+                    "PROMPT_COMMAND=('{prompt}')\nsource '{init}'\nsource '{init}'\nprintf '%s\\n' \"${{PROMPT_COMMAND[@]}}\" > '{listing}'\nfalse\nfor __repot_command in \"${{PROMPT_COMMAND[@]}}\"; do eval \"$__repot_command\"; done\n",
+                    init = init.display(),
+                    listing = listing.display()
+                ),
+            ));
+        }
+        for (label, body) in cases {
+            let script = fixture.write(&format!("prompt-{label}.sh"), format!("set -u\n{body}"));
+            fs::remove_file(&status).ok();
+            fs::remove_file(&listing).ok();
+            let output = fixture
+                .shell("bash")
+                .arg("--noprofile")
+                .arg("--norc")
+                .arg(&script)
+                .output()
+                .expect("bash runs");
+            assert_success(&output, label);
+            assert_eq!(
+                fs::read_to_string(&status).expect("status seen by prompt command"),
+                "1",
+                "{label}: the prompt command sees the status of `false`"
+            );
+            let listed = fs::read_to_string(&listing).expect("prompt listing");
+            assert_eq!(
+                listed.matches("__repot_visit").count(),
+                1,
+                "{label}: repeated init adds the hook once: {listed}"
+            );
+        }
+    }
+
+    #[test]
+    fn fish_cd_dash_returns_to_the_directory_before_a_jump() {
+        if !shell_available("fish") {
+            return;
+        }
+        let fixture = Fixture::new();
+        let wanted = fixture.repo("host/owner/alpha");
+        let elsewhere = fixture.directory.path().join("elsewhere");
+        fs::create_dir(&elsewhere).expect("starting directory");
+        let elsewhere = elsewhere.canonicalize().expect("canonical start");
+        let init = fixture.repot(&["shell-init", "fish"]);
+        assert!(init.status.success());
+        let init = fixture.write("fish-init.fish", init.stdout);
+        let jumped = fixture.directory.path().join("jumped");
+        let returned = fixture.directory.path().join("returned");
+        let script = fixture.write(
+            "jump-back.fish",
+            format!(
+                "source '{}'\ncd '{}'\nrepot cd alpha\npwd > '{}'\ncd -\npwd > '{}'\n",
+                init.display(),
+                elsewhere.display(),
+                jumped.display(),
+                returned.display()
+            ),
+        );
+        let output = fixture
+            .shell("fish")
+            .arg("--no-config")
+            .arg(&script)
+            .output()
+            .expect("fish runs");
+        assert_success(&output, "fish");
+        assert_eq!(
+            fs::read_to_string(&jumped)
+                .expect("jumped directory")
+                .trim_end(),
+            wanted.to_string_lossy()
+        );
+        assert_eq!(
+            fs::read_to_string(&returned)
+                .expect("returned directory")
+                .trim_end(),
+            elsewhere.to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn zsh_and_fish_record_the_checkout_a_shell_starts_in() {
+        for shell in ["zsh", "fish"] {
+            if !shell_available(shell) {
+                continue;
+            }
+            let fixture = Fixture::new();
+            let alpha = fixture.repo("host/owner/alpha");
+            let init = fixture.repot(&["shell-init", shell]);
+            assert!(init.status.success());
+            let script = fixture.write(&format!("start-{shell}"), init.stdout);
+            let flag = if shell == "zsh" { "-f" } else { "--no-config" };
+            let output = fixture
+                .shell(shell)
+                .current_dir(&alpha)
+                .arg(flag)
+                .arg(&script)
+                .output()
+                .expect("shell runs");
+            assert_success(&output, shell);
+            assert_eq!(visits(&fixture), [alpha.to_string_lossy()], "{shell}");
+        }
     }
 }

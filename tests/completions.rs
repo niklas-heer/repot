@@ -2,6 +2,7 @@
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use std::fs;
     use std::process::{Command, Output};
 
@@ -53,6 +54,10 @@ mod tests {
             let path = home.path().join(format!("repot.{shell}"));
             fs::write(&path, text).expect("completion file");
             if Command::new(shell).arg("--version").output().is_err() {
+                assert!(
+                    env::var("REPOT_REQUIRE_SHELLS").as_deref() != Ok("1"),
+                    "{shell} is required because REPOT_REQUIRE_SHELLS=1"
+                );
                 eprintln!("skipping optional {shell}: unavailable");
                 continue;
             }
@@ -98,6 +103,41 @@ mod tests {
                 loaded.status.success(),
                 "{shell}: {}",
                 String::from_utf8_lossy(&loaded.stderr)
+            );
+        }
+    }
+
+    #[test]
+    fn nushell_completions_leave_directory_changing_commands_to_the_wrapper() {
+        let home = tempfile::tempdir().expect("temporary home");
+        let output = run(home.path(), &["completions", "nu"]);
+        assert!(output.status.success());
+        let text = String::from_utf8(output.stdout).expect("completion UTF-8");
+        // An `extern` with the same name would run the binary directly and bypass
+        // the shell-init wrapper, whichever file is sourced last.
+        for name in [
+            "repot",
+            "repot cd",
+            "repot jump",
+            "repot clone",
+            "repot get",
+            "repot new",
+            "repot publish",
+            "repot adopt",
+            "repot create",
+            "repot migrate",
+            "repot trash restore",
+        ] {
+            assert!(
+                !text.contains(&format!("export extern \"{name}\" [")),
+                "{name} is left to the wrapper"
+            );
+        }
+        assert!(!text.contains("export extern repot ["));
+        for name in ["repot list", "repot status", "repot trash list"] {
+            assert!(
+                text.contains(&format!("export extern \"{name}\" [")),
+                "{name}"
             );
         }
     }

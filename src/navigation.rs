@@ -122,25 +122,45 @@ pub fn shell_init(shell: &str, track: bool) -> Result<()> {
 
 // Directory-change hooks feed the picker's frecency ranking. They call the
 // binary directly, never the wrapper, and stay silent on any failure.
+// The bash hook must return the status it received: it runs ahead of the
+// user's own PROMPT_COMMAND, which may read `$?`. Bash 5.1+ allows an array.
 const BASH_TRACK: &str = r#"
 # Remember which repositories you use, to rank `repot cd` (disable: --no-track).
 __repot_visit() {
+    local repot_status=$?
     if [ "${__repot_last_pwd-}" != "$PWD" ]; then
         __repot_last_pwd=$PWD
         command repot visit -- "$PWD" >/dev/null 2>&1
     fi
+    return "$repot_status"
 }
-case ";${PROMPT_COMMAND-};" in
-    *";__repot_visit;"*) ;;
-    *) PROMPT_COMMAND="__repot_visit${PROMPT_COMMAND:+;$PROMPT_COMMAND}" ;;
+case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in
+    "declare -a"*)
+        __repot_listed=
+        for __repot_entry in ${PROMPT_COMMAND[@]+"${PROMPT_COMMAND[@]}"}; do
+            if [ "$__repot_entry" = __repot_visit ]; then __repot_listed=1; fi
+        done
+        if [ -z "$__repot_listed" ]; then
+            PROMPT_COMMAND=(__repot_visit ${PROMPT_COMMAND[@]+"${PROMPT_COMMAND[@]}"})
+        fi
+        unset __repot_listed __repot_entry
+        ;;
+    *)
+        case ";${PROMPT_COMMAND-};" in
+            *";__repot_visit;"*) ;;
+            *) PROMPT_COMMAND="__repot_visit${PROMPT_COMMAND:+;$PROMPT_COMMAND}" ;;
+        esac
+        ;;
 esac
 "#;
 
+// The hooks also record the directory the shell starts in, which no change event reports.
 const ZSH_TRACK: &str = r#"
 # Remember which repositories you use, to rank `repot cd` (disable: --no-track).
 __repot_visit() { command repot visit -- "$PWD" >/dev/null 2>&1 }
 autoload -Uz add-zsh-hook
 add-zsh-hook chpwd __repot_visit
+__repot_visit
 "#;
 
 const FISH_TRACK: &str = r"
@@ -148,13 +168,19 @@ const FISH_TRACK: &str = r"
 function __repot_visit --on-variable PWD
     command repot visit -- $PWD >/dev/null 2>&1
 end
+__repot_visit
 ";
 
+// Re-sourcing replaces the earlier hook: entries whose source mentions
+// `repot visit` are dropped before this one is appended.
 const NU_TRACK: &str = r"
 # Remember which repositories you use, to rank `repot cd` (disable: --no-track).
-$env.config.hooks.env_change.PWD = ($env.config.hooks.env_change.PWD? | default [] | append {|_, after|
-    try { ^repot visit -- $after o+e>| ignore }
-})
+$env.config.hooks.env_change.PWD = (
+    $env.config.hooks.env_change.PWD?
+    | default []
+    | where {|hook| not ((view source $hook) | str contains 'repot visit') }
+    | append {|_, after| try { ^repot visit -- $after o+e>| ignore } }
+)
 ";
 
 const POSIX_INIT: &str = r#"repot() {
@@ -187,28 +213,51 @@ const FISH_INIT: &str = r#"function repot
     set -l repot_destination (string collect --allow-empty --no-trim-newlines < "$repot_cd_file")
     command rm -f -- "$repot_cd_file"
     if test "$repot_status" -eq 0; and test -n "$repot_destination"; and test -d "$repot_destination"
-        builtin cd -- "$repot_destination"
+        cd -- "$repot_destination"
     end
     return $repot_status
 end
 "#;
 
-const NU_INIT: &str = r"# repot shell integration: lets `repot cd`, `new`, `clone` and friends change directory.
+// Only the subcommands that can hand off a directory go through the wrapper.
+// Everything else runs the binary directly, so its output stays pipeable.
+// Wrapped commands return their output as a value: nu prints it at the prompt
+// and `let` captures it, but a script must `print` it to show it.
+const NU_INIT: &str = r#"# repot shell integration: lets `repot cd`, `new`, `clone` and friends change directory.
+# Report commands exit 3 when something needs review, which nu raises as an error;
+# read the status with `repot status --json | complete` instead of `| from json`.
 def --env --wrapped repot [...args: string] {
-    let command = ($args | where {|arg| not ($arg | str starts-with '-') } | get 0? | default '')
-    if $command in [list ls root status sync info doctor stale scan find restore completions shell-init mcp agent-guide help h] {
-        # Reports stay attached to the terminal and remain pipeable, e.g. `repot status --json | from json`.
+    # Global options such as `--manifest PATH` may come before the subcommand.
+    mut words = []
+    mut skip = false
+    for arg in $args {
+        if $skip {
+            $skip = false
+        } else if $arg == '--manifest' {
+            $skip = true
+        } else if not ($arg | str starts-with '-') {
+            $words = ($words | append $arg)
+        }
+    }
+    let first = ($words | get 0? | default '')
+    let name = if $first == 'trash' { $words | take 2 | str join ' ' } else { $first }
+    if $name not-in [cd jump clone get new publish adopt create migrate 'trash restore'] {
         ^repot ...$args
     } else {
-        let repot_cd_file = (^mktemp -t repot-cd.XXXXXXXX | str trim)
-        try { with-env {REPOT_CD_FILE: $repot_cd_file} { ^repot ...$args } } catch { }
-        let repot_status = $env.LAST_EXIT_CODE
-        let repot_destination = (try { open --raw $repot_cd_file } catch { '' })
-        rm -f $repot_cd_file
-        if $repot_status == 0 and ($repot_destination | is-not-empty) and ($repot_destination | path type) == 'dir' {
-            cd $'($repot_destination)/.'
+        let cd_file = (^mktemp -t repot-cd.XXXXXXXX | str trim)
+        let run = (try {
+            {status: 0, output: (with-env {REPOT_CD_FILE: $cd_file} { ^repot ...$args })}
+        } catch {|error| {status: ($error.exit_code? | default 1), output: ''} })
+        let destination = (try { open --raw $cd_file } catch { '' })
+        rm -f $cd_file
+        if $run.status != 0 {
+            error make {msg: $"repot exited with status ($run.status)"}
         }
-        $env.LAST_EXIT_CODE = $repot_status
+        if ($destination | is-not-empty) and ($destination | path type) == 'dir' {
+            # The `/.` keeps names with unusual characters, such as a trailing newline, intact.
+            cd $'($destination)/.'
+        }
+        if ($run.output | is-empty) { null } else { $run.output }
     }
 }
-";
+"#;
