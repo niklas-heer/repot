@@ -797,7 +797,7 @@ mod tests {
     }
 
     #[test]
-    fn nushell_finds_the_subcommand_after_global_options() {
+    fn nushell_routes_by_subcommand_with_global_options_after_it() {
         if !shell_available("nu") {
             return;
         }
@@ -811,7 +811,7 @@ mod tests {
             &fixture,
             "manifest.nu",
             &format!(
-                "source '{}'\nrepot --manifest '{}' cd alpha\n$env.PWD | save --force '{}'\n",
+                "source '{}'\nrepot cd --manifest '{}' alpha\n$env.PWD | save --force '{}'\n",
                 init.display(),
                 manifest.display(),
                 result.display()

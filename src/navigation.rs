@@ -127,10 +127,10 @@ pub fn handoff(path: &Path) -> Result<()> {
 
 pub fn shell_init(shell: &str, track: bool) -> Result<()> {
     let (script, hook) = match shell {
-        "bash" => (POSIX_INIT, BASH_TRACK),
-        "zsh" => (POSIX_INIT, ZSH_TRACK),
-        "fish" => (FISH_INIT, FISH_TRACK),
-        "nu" => (NU_INIT, NU_TRACK),
+        "bash" => (POSIX_INIT.to_owned(), BASH_TRACK),
+        "zsh" => (POSIX_INIT.to_owned(), ZSH_TRACK),
+        "fish" => (FISH_INIT.to_owned(), FISH_TRACK),
+        "nu" => (nu_init(), NU_TRACK),
         _ => {
             return Err(format!(
                 "unsupported shell {shell:?}; choose nu, zsh, bash, or fish"
@@ -249,45 +249,66 @@ const FISH_INIT: &str = r#"function repot
 end
 "#;
 
-// Only the subcommands that can hand off a directory go through the wrapper.
-// Everything else runs the binary directly, so its output stays pipeable.
-// Wrapped commands return their output as a value: nu prints it at the prompt
-// and `let` captures it, but a script must `print` it to show it.
+/// Subcommands that can hand off a directory. Nushell gets a `def --env`
+/// wrapper for each; every other `repot` call runs the binary directly, so its
+/// output streams and pipes like any external command and the generated
+/// `extern "repot"` completions keep working.
+pub const NU_HANDOFF: &[&str] = &[
+    "cd",
+    "jump",
+    "clone",
+    "get",
+    "new",
+    "create",
+    "publish",
+    "adopt",
+    "migrate",
+    "trash restore",
+];
+
+// Wrapped commands stay attached to the terminal, so the picker, colour and
+// live output work. With `--json` they return the report as a value instead.
+// A failure raises an error, which `try` can catch.
 const NU_INIT: &str = r#"# repot shell integration: lets `repot cd`, `new`, `clone` and friends change directory.
 # Report commands exit 3 when something needs review, which nu raises as an error;
 # read the status with `repot status --json | complete` instead of `| from json`.
-def --env --wrapped repot [...args: string] {
-    # Global options such as `--manifest PATH` may come before the subcommand.
-    mut words = []
-    mut skip = false
-    for arg in $args {
-        if $skip {
-            $skip = false
-        } else if $arg == '--manifest' {
-            $skip = true
-        } else if not ($arg | str starts-with '-') {
-            $words = ($words | append $arg)
-        }
-    }
-    let first = ($words | get 0? | default '')
-    let name = if $first == 'trash' { $words | take 2 | str join ' ' } else { $first }
-    if $name not-in [cd jump clone get new publish adopt create migrate 'trash restore'] {
-        ^repot ...$args
-    } else {
-        let cd_file = (^mktemp -t repot-cd.XXXXXXXX | str trim)
-        let run = (try {
+# Put global options after the subcommand, e.g. `repot cd --manifest PATH query`.
+def --env __repot_handoff [args: list<string>] {
+    let cd_file = (mktemp -t repot-cd.XXXXXXXX)
+    let run = if '--json' in $args {
+        try {
             {status: 0, output: (with-env {REPOT_CD_FILE: $cd_file} { ^repot ...$args })}
-        } catch {|error| {status: ($error.exit_code? | default 1), output: ''} })
-        let destination = (try { open --raw $cd_file } catch { '' })
-        rm -f $cd_file
-        if $run.status != 0 {
-            error make {msg: $"repot exited with status ($run.status)"}
-        }
-        if ($destination | is-not-empty) and ($destination | path type) == 'dir' {
-            # The `/.` keeps names with unusual characters, such as a trailing newline, intact.
-            cd $'($destination)/.'
-        }
-        if ($run.output | is-empty) { null } else { $run.output }
+        } catch {|error| {status: ($error.exit_code? | default 1), output: null} }
+    } else {
+        try {
+            with-env {REPOT_CD_FILE: $cd_file} { ^repot ...$args }
+            {status: 0, output: null}
+        } catch {|error| {status: ($error.exit_code? | default 1), output: null} }
     }
+    let destination = (try { open --raw $cd_file } catch { '' })
+    rm -f $cd_file
+    if $run.status != 0 {
+        error make --unspanned {msg: $"repot ($args | first) exited with status ($run.status)"}
+    }
+    # Follow symlinked checkouts; the `/.` keeps names ending in a newline intact.
+    if ($destination | is-not-empty) and ($destination | path expand | path type) == 'dir' {
+        cd $'($destination)/.'
+    }
+    $run.output
 }
 "#;
+
+fn nu_init() -> String {
+    let mut script = String::from(NU_INIT);
+    for name in NU_HANDOFF {
+        let words = name
+            .split(' ')
+            .map(|word| format!("'{word}'"))
+            .collect::<Vec<_>>();
+        script.push_str(&format!(
+            "def --env --wrapped \"repot {name}\" [...args: string] {{ __repot_handoff [{} ...$args] }}\n",
+            words.join(" ")
+        ));
+    }
+    script
+}

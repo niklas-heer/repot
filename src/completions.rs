@@ -29,10 +29,10 @@ pub fn render(shell: Shell, mut command: Command) -> Result<()> {
         .map_err(|error| format!("cannot print completions: {error}"))
 }
 
-/// Nushell resolves `extern "repot cd"` ahead of the shell-init wrapper, so
-/// the generated definitions for `repot` and for every subcommand that can
-/// hand off a directory are left out; the wrapper then handles those names
-/// whichever file is sourced first.
+/// Nushell resolves `extern "repot cd"` ahead of the shell-init wrapper of the
+/// same name, so the generated definitions for subcommands that hand off a
+/// directory are left out; the wrapper then handles them whichever file is
+/// sourced first. `extern "repot"` stays, so other subcommands still complete.
 fn render_nu(command: &Command) -> Result<()> {
     let mut generated = Vec::new();
     clap_complete_nushell::Nushell
@@ -46,18 +46,15 @@ fn render_nu(command: &Command) -> Result<()> {
             skipping = line != "  ]\n";
             continue;
         }
-        if let Some(name) = line
+        let wrapped = line
             .strip_prefix("  export extern ")
             .and_then(|rest| rest.strip_suffix(" [\n"))
-        {
-            let name = name.trim_matches('"');
-            if WRAPPED
-                .iter()
-                .any(|wrapped| wrapped == &name || wrapped.starts_with(&format!("{name} ")))
-            {
-                skipping = true;
-                continue;
-            }
+            .map(|name| name.trim_matches('"'))
+            .and_then(|name| name.strip_prefix("repot "))
+            .is_some_and(|name| crate::navigation::NU_HANDOFF.contains(&name));
+        if wrapped {
+            skipping = true;
+            continue;
         }
         output
             .write_all(line.as_bytes())
@@ -65,23 +62,6 @@ fn render_nu(command: &Command) -> Result<()> {
     }
     Ok(())
 }
-
-/// Commands that the nushell wrapper handles, plus the bare `repot` and the
-/// `trash` group that contains `trash restore`.
-const WRAPPED: &[&str] = &[
-    "repot",
-    "repot cd",
-    "repot jump",
-    "repot clone",
-    "repot get",
-    "repot new",
-    "repot publish",
-    "repot adopt",
-    "repot create",
-    "repot migrate",
-    "repot trash",
-    "repot trash restore",
-];
 
 pub fn help(path: &[String], mut command: Command) -> Result<()> {
     command.build();

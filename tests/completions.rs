@@ -116,7 +116,6 @@ mod tests {
         // An `extern` with the same name would run the binary directly and bypass
         // the shell-init wrapper, whichever file is sourced last.
         for name in [
-            "repot",
             "repot cd",
             "repot jump",
             "repot clone",
@@ -133,7 +132,8 @@ mod tests {
                 "{name} is left to the wrapper"
             );
         }
-        assert!(!text.contains("export extern repot ["));
+        // The top-level extern stays, so `repot <Tab>` still lists subcommands.
+        assert!(text.contains("export extern repot ["));
         for name in ["repot list", "repot status", "repot trash list"] {
             assert!(
                 text.contains(&format!("export extern \"{name}\" [")),
