@@ -330,9 +330,10 @@ exits 3 when it has findings and 0 when everything is where it belongs.
 
 `--fix` applies the same commands, asking before each one and naming any work
 that exists only in that checkout. `--fix --yes` runs unattended and never
-archives a checkout with such work; relocating moves the work along. Each fix goes through the normal checks of `repot rm` and
-`repot adopt`; a renamed repository first gets its remote URL updated, then moves
-to its new name's location. Findings without a safe automatic fix, such as a
+archives a checkout with such work; relocating moves the work along. Each fix
+goes through the normal checks of `repot rm` and `repot adopt`; a renamed
+repository first gets its remote URL updated, then moves to its new name's
+location. Findings without a safe automatic fix, such as a
 repository missing from GitHub, are always left for you.
 
 ## Stale repositories

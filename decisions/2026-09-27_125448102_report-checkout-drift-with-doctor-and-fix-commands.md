@@ -47,3 +47,10 @@ finding whose checkout holds work that exists nowhere else. Fixes call the
 existing `repot rm` and `repot adopt` paths, so archive recovery, move checks and
 manifest updates are unchanged. The report alone still changes nothing.
 
+## Update 2026-11-08
+
+`--fix --dry-run` runs the same checks and prints the planned fixes without
+changing anything. Unique work now includes unpushed commits on any local
+branch, and a checkout that cannot be inspected counts as work. `--fix --yes`
+holds back only archiving for such checkouts, re-checking just before it acts;
+relocation goes ahead because it moves the work along.
