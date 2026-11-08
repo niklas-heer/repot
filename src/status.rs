@@ -851,19 +851,48 @@ struct Snapshot {
 }
 
 fn read_snapshot(path: &Path, timeout: Duration) -> Result<Snapshot> {
-    parse_snapshot(&required(
+    let mut snapshot = parse_snapshot(&required(
         path,
         &[
             "status",
             "--porcelain=v2",
             "--branch",
+            "--ahead-behind",
             "--show-stash",
             "-z",
             "--untracked-files=all",
             "--ignore-submodules=none",
         ],
         timeout,
-    )?)
+    )?)?;
+    if !reports_stash_count(timeout) {
+        snapshot.stashes = required(path, &["stash", "list"], timeout)?.lines().count();
+    }
+    Ok(snapshot)
+}
+
+/// Porcelain v2 prints the `# stash N` header only from Git 2.35; older Git
+/// omits it, which must not read as "no stashes". Asked once per run.
+fn reports_stash_count(timeout: Duration) -> bool {
+    static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SUPPORTED.get_or_init(|| {
+        probe(Path::new("/"), &["version"], timeout)
+            .ok()
+            .flatten()
+            .is_some_and(|version| git_at_least(&version, 2, 35))
+    })
+}
+
+/// Whether `git version X.Y...` output names at least `major.minor`.
+fn git_at_least(version: &str, major: u32, minor: u32) -> bool {
+    let mut parts = version
+        .trim_start_matches("git version ")
+        .split(['.', ' '])
+        .map(|part| part.parse::<u32>().ok());
+    match (parts.next().flatten(), parts.next().flatten()) {
+        (Some(found_major), Some(found_minor)) => (found_major, found_minor) >= (major, minor),
+        _ => false,
+    }
 }
 
 /// Parses `--porcelain=v2 --branch --show-stash -z`. Counting matches `dirty`:
@@ -1629,6 +1658,16 @@ pub fn validate_plan(report: &Report, options: &Options) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stash_header_needs_git_2_35() {
+        assert!(git_at_least("git version 2.35.0", 2, 35));
+        assert!(git_at_least("git version 2.55.0 (Apple Git-160)", 2, 35));
+        assert!(git_at_least("git version 3.0.1", 2, 35));
+        assert!(!git_at_least("git version 2.34.1", 2, 35));
+        assert!(!git_at_least("git version 2.30.2", 2, 35));
+        assert!(!git_at_least("unexpected", 2, 35));
+    }
 
     fn report(state: &str, action: &str, reason: &str, dirty: Dirty, stashes: usize) -> Report {
         let mut report = Report::empty(Path::new("/projects/owner/name"));

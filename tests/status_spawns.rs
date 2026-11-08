@@ -16,6 +16,8 @@ mod tests {
     const CHECKOUTS: usize = 4;
     /// Git processes allowed per clean checkout by `status --no-fetch`.
     const GIT_PER_CLEAN_CHECKOUT: usize = 4;
+    /// Asked once per run, not per checkout: `git version`, for the stash count.
+    const GIT_PER_RUN: usize = 1;
 
     fn real_git() -> PathBuf {
         std::env::split_paths(&std::env::var_os("PATH").expect("PATH"))
@@ -183,8 +185,66 @@ mod tests {
 
         let spawns = fs::read_to_string(&log).expect("Git log").lines().count();
         assert!(
-            spawns <= GIT_PER_CLEAN_CHECKOUT * CHECKOUTS,
-            "{spawns} Git processes for {CHECKOUTS} clean checkouts; budget is {GIT_PER_CLEAN_CHECKOUT} each"
+            spawns <= GIT_PER_CLEAN_CHECKOUT * CHECKOUTS + GIT_PER_RUN,
+            "{spawns} Git processes for {CHECKOUTS} clean checkouts; budget is {GIT_PER_CLEAN_CHECKOUT} each plus {GIT_PER_RUN}"
         );
+    }
+
+    /// Git before 2.35 omits porcelain v2's `# stash` header; a stash must still
+    /// keep an otherwise synced checkout out of "Up to date".
+    #[test]
+    fn stashes_are_counted_when_git_omits_the_stash_header() {
+        let home = TempDir::new().expect("isolated home");
+        let root = home.path();
+        git(
+            root,
+            root,
+            &["init", "--bare", "--initial-branch=main", "remote.git"],
+        );
+        let checkout = root.join("projects/host/owner/stashed");
+        fs::create_dir_all(&checkout).expect("tree");
+        git(root, &checkout, &["init", "--initial-branch=main"]);
+        fs::write(checkout.join("README"), "base").expect("file");
+        git(root, &checkout, &["add", "--", "README"]);
+        git(root, &checkout, &["commit", "-m", "initial"]);
+        git(
+            root,
+            &checkout,
+            &["remote", "add", "origin", "../../../../remote.git"],
+        );
+        git(root, &checkout, &["push", "-u", "origin", "main"]);
+        fs::write(checkout.join("README"), "draft").expect("change");
+        git(root, &checkout, &["stash"]);
+
+        // Behaves like Git 2.34: older version string, no stash header.
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).expect("bin");
+        let shim = bin.join("git");
+        fs::write(
+            &shim,
+            format!(
+                "#!/bin/sh\ncase \" $* \" in\n  *' version '*) echo 'git version 2.34.1'; exit 0 ;;\n  *' status '*) '{git}' \"$@\" | perl -0 -ne 'print unless /^# stash /'; exit 0 ;;\nesac\nexec '{git}' \"$@\"\n",
+                git = real_git().display()
+            ),
+        )
+        .expect("shim");
+        fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).expect("shim mode");
+        let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(
+            &std::env::var_os("PATH").expect("PATH"),
+        )))
+        .expect("PATH");
+
+        let output = isolated(&mut Command::new(env!("CARGO_BIN_EXE_repot")), root)
+            .current_dir(root)
+            .env("PATH", path)
+            .env("GHQ_ROOT", root.join("projects"))
+            .env_remove("REPOT_CD_FILE")
+            .args(["status", "--no-fetch", "--json"])
+            .output()
+            .expect("repot runs");
+        let reports: serde_json::Value = serde_json::from_slice(&output.stdout).expect("JSON");
+        let report = &reports[0];
+        assert_eq!(report["stashes"], 1, "{report}");
+        assert_ne!(report["action"], "none", "{report}");
     }
 }
