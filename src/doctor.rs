@@ -394,12 +394,16 @@ enum Decision {
 }
 
 /// Checks a finding against the checkout as it is now, so work that appeared
-/// after the scan is never archived unattended.
+/// after the scan is never archived unattended. Relocation moves the checkout
+/// with its work, so local work never blocks it.
 fn decide(finding: &Finding, yes: bool) -> Decision {
     if matches!(finding.action, Action::Review) {
         return Decision::Skip("nothing to apply automatically; look at it yourself".into());
     }
     let work = local_work(&finding.path);
+    if !matches!(finding.action, Action::Archive) {
+        return Decision::Apply { work };
+    }
     if let Some(work) = work.as_ref().filter(|_| yes) {
         return Decision::Skip(if finding.local_work.is_some() {
             format!("it has work that exists only there ({work})")

@@ -237,6 +237,12 @@ esac
             "https://github.com/owner/retired.git",
         );
         fs::write(retired.join("notes"), "only here").expect("unique work");
+        // Relocating keeps a checkout's work, so local changes never block it.
+        let misfiled = world.checkout(
+            "somewhere/else/misfiled",
+            "https://example.com/team/misfiled.git",
+        );
+        fs::write(misfiled.join("notes"), "in progress").expect("work in progress");
 
         let without_terminal = world
             .command(env!("CARGO_BIN_EXE_repot"))
@@ -283,6 +289,12 @@ esac
         );
         // Unique work is never touched unattended.
         assert!(retired.join("notes").exists());
+        assert!(!misfiled.exists(), "{stderr}");
+        assert_eq!(
+            fs::read_to_string(world.path("root/example.com/team/misfiled/notes"))
+                .expect("work moved with the checkout"),
+            "in progress"
+        );
     }
 
     /// Files and directories under the given roots, with contents, skipping
