@@ -55,6 +55,8 @@ fn terminate(child: &mut Child) {
 
 fn command(program: &str, args: &[&OsStr], path: &Path) -> Command {
     let mut command = Command::new(program);
+    // A child must never move the caller's shell, even one that runs `repot cd`.
+    command.env_remove("REPOT_CD_FILE");
     // These variables override `current_dir` and could redirect a bulk operation
     // into a different checkout or index when invoked from a Git-aware shell.
     for name in [

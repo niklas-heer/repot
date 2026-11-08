@@ -273,6 +273,7 @@ fn git_config(args: &[&str]) -> Result<Option<String>> {
     let output = Command::new("git")
         .arg("config")
         .args(args)
+        .env_remove("REPOT_CD_FILE")
         .output()
         .map_err(|error| format!("read Git configuration: {error}"))?;
     if output.status.code() == Some(1) {

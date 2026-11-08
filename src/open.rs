@@ -2,6 +2,7 @@
 
 use std::env;
 use std::ffi::OsString;
+use std::fmt::Write as _;
 use std::path::Path;
 use std::process::Command;
 
@@ -18,20 +19,79 @@ pub struct Options {
     pub web: bool,
 }
 
+/// Splits a command line into words with POSIX-shell quoting: whitespace
+/// separates words, single quotes are literal, double quotes accept `\"`, `\\`,
+/// `\$`, `` \` `` and `\<newline>` escapes, and a backslash escapes the next
+/// character. Nothing is expanded and no shell runs. `None` if a quote is left
+/// open or the text ends in a backslash.
+fn split_words(text: &str) -> Option<Vec<String>> {
+    let mut words = Vec::new();
+    let mut word: Option<String> = None;
+    let mut characters = text.chars();
+    while let Some(character) = characters.next() {
+        match character {
+            ' ' | '\t' | '\n' => words.extend(word.take()),
+            '\'' => {
+                let current = word.get_or_insert_with(String::new);
+                loop {
+                    match characters.next()? {
+                        '\'' => break,
+                        literal => current.push(literal),
+                    }
+                }
+            }
+            '"' => {
+                let current = word.get_or_insert_with(String::new);
+                loop {
+                    match characters.next()? {
+                        '"' => break,
+                        '\\' => match characters.next()? {
+                            escaped @ ('"' | '\\' | '$' | '`') => current.push(escaped),
+                            '\n' => {}
+                            other => {
+                                current.push('\\');
+                                current.push(other);
+                            }
+                        },
+                        literal => current.push(literal),
+                    }
+                }
+            }
+            '\\' => match characters.next()? {
+                '\n' => {}
+                escaped => word.get_or_insert_with(String::new).push(escaped),
+            },
+            literal => word.get_or_insert_with(String::new).push(literal),
+        }
+    }
+    words.extend(word);
+    Some(words)
+}
+
+/// Parses an environment variable holding a command line into argv.
+fn command_words(name: &str, text: &str) -> Result<Vec<OsString>> {
+    let words = split_words(text)
+        .ok_or_else(|| format!("{name} has an unterminated quote or trailing backslash"))?;
+    Ok(words.into_iter().map(OsString::from).collect())
+}
+
 /// `REPOT_EDITOR`, then `VISUAL`, then `EDITOR`, split into program and flags.
-fn editor() -> Option<Vec<OsString>> {
-    ["REPOT_EDITOR", "VISUAL", "EDITOR"]
+fn editor() -> Result<Vec<OsString>> {
+    let (name, value) = ["REPOT_EDITOR", "VISUAL", "EDITOR"]
         .into_iter()
-        .filter_map(env::var_os)
-        .find(|value| !value.is_empty())
-        .map(|value| {
-            value
-                .to_string_lossy()
-                .split_whitespace()
-                .map(OsString::from)
-                .collect::<Vec<_>>()
+        .find_map(|name| {
+            env::var_os(name)
+                .filter(|value| !value.is_empty())
+                .map(|value| (name, value))
         })
-        .filter(|words| !words.is_empty())
+        .ok_or("no editor configured; set REPOT_EDITOR, VISUAL or EDITOR, or use --web")?;
+    let words = command_words(name, &value.to_string_lossy())?;
+    if words.is_empty() {
+        return Err(
+            "no editor configured; set REPOT_EDITOR, VISUAL or EDITOR, or use --web".into(),
+        );
+    }
+    Ok(words)
 }
 
 /// The web page of a checkout's remote, on the current branch when it is not
@@ -79,24 +139,40 @@ pub fn web_url(path: &Path) -> Result<String> {
             "/tree/"
         };
         page.push_str(separator);
-        page.push_str(&branch);
+        page.push_str(&encode_branch(&branch));
     }
     Ok(page)
 }
 
-fn browser() -> Vec<OsString> {
+/// Percent-encodes each segment of a branch name and keeps the `/` separators,
+/// so characters such as `#` and `%` reach the forge as part of the path.
+fn encode_branch(branch: &str) -> String {
+    branch
+        .split('/')
+        .map(|segment| {
+            let mut encoded = String::new();
+            for byte in segment.bytes() {
+                if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+                    encoded.push(char::from(byte));
+                } else {
+                    let _ = write!(encoded, "%{byte:02X}");
+                }
+            }
+            encoded
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn browser() -> Result<Vec<OsString>> {
     if let Some(browser) = env::var_os("BROWSER").filter(|value| !value.is_empty()) {
-        return browser
-            .to_string_lossy()
-            .split_whitespace()
-            .map(OsString::from)
-            .collect();
+        return command_words("BROWSER", &browser.to_string_lossy());
     }
-    vec![OsString::from(if cfg!(target_os = "macos") {
+    Ok(vec![OsString::from(if cfg!(target_os = "macos") {
         "open"
     } else {
         "xdg-open"
-    })]
+    })])
 }
 
 fn launch(words: &[OsString], argument: &OsString) -> Result<()> {
@@ -104,6 +180,8 @@ fn launch(words: &[OsString], argument: &OsString) -> Result<()> {
     let status = Command::new(program)
         .args(flags)
         .arg(argument)
+        // The editor or browser may run `repot cd`, which must not move the caller's shell.
+        .env_remove("REPOT_CD_FILE")
         .status()
         .map_err(|error| format!("cannot start {}: {error}", program.to_string_lossy()))?;
     if status.success() {
@@ -121,12 +199,77 @@ pub fn run(path: &Path, roots: &[std::path::PathBuf], web: bool) -> Result<u8> {
     if web {
         let page = web_url(path)?;
         ui::note("↗", ui::INFO, &format!("opening {page}"));
-        launch(&browser(), &OsString::from(page))?;
+        launch(&browser()?, &OsString::from(page))?;
     } else {
-        let editor = editor()
-            .ok_or("no editor configured; set REPOT_EDITOR, VISUAL or EDITOR, or use --web")?;
+        let editor = editor()?;
         ui::note("↗", ui::INFO, &format!("opening {name}"));
         launch(&editor, &path.as_os_str().to_owned())?;
     }
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn words(text: &str) -> Option<Vec<String>> {
+        split_words(text)
+    }
+
+    #[test]
+    fn splits_plain_words_and_ignores_extra_whitespace() {
+        assert_eq!(
+            words("  code\t--wait\n"),
+            Some(vec!["code".into(), "--wait".into()])
+        );
+        assert_eq!(words("   "), Some(vec![]));
+        assert_eq!(words(""), Some(vec![]));
+    }
+
+    #[test]
+    fn single_quotes_are_literal() {
+        assert_eq!(
+            words(r"'/a b/ed\it' --x"),
+            Some(vec![r"/a b/ed\it".into(), "--x".into()])
+        );
+        assert_eq!(words("''"), Some(vec![String::new()]));
+    }
+
+    #[test]
+    fn double_quotes_keep_only_the_shell_escapes() {
+        assert_eq!(
+            words(r#""/a b/say \"hi\"" "x\y\$z\`""#),
+            Some(vec![r#"/a b/say "hi""#.into(), r"x\y$z`".into(),])
+        );
+        assert_eq!(words(r#""a\\b""#), Some(vec![r"a\b".into()]));
+    }
+
+    #[test]
+    fn backslash_escapes_outside_quotes_and_joins_words() {
+        assert_eq!(words(r"/a\ b/ed"), Some(vec!["/a b/ed".into()]));
+        assert_eq!(
+            words(r#"pre'fix'"mid"post"#),
+            Some(vec!["prefixmidpost".into()])
+        );
+        assert_eq!(words("a\\\nb"), Some(vec!["ab".into()]));
+    }
+
+    #[test]
+    fn unterminated_quotes_and_trailing_backslashes_are_rejected() {
+        assert_eq!(words("'open"), None);
+        assert_eq!(words("\"open"), None);
+        assert_eq!(words("\"open\\"), None);
+        assert_eq!(words("code\\"), None);
+    }
+
+    #[test]
+    fn encodes_each_branch_segment() {
+        assert_eq!(
+            encode_branch("feature/plain-1.0_~x"),
+            "feature/plain-1.0_~x"
+        );
+        assert_eq!(encode_branch("feat#1%25/x"), "feat%231%2525/x");
+        assert_eq!(encode_branch("a b/c+d"), "a%20b/c%2Bd");
+        assert_eq!(encode_branch("ünï/x"), "%C3%BCn%C3%AF/x");
+    }
 }
