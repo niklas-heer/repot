@@ -38,8 +38,8 @@ pub struct Options {
     /// Apply the suggested fixes, asking before each one.
     #[arg(long)]
     pub fix: bool,
-    /// With --fix, apply without asking; findings with work that exists only in
-    /// that checkout are skipped.
+    /// With --fix, apply without asking; a checkout with work that exists only
+    /// there is never archived, while relocation moves the work along.
     #[arg(long, short = 'y', requires = "fix")]
     pub yes: bool,
     /// With --fix, run the same checks and show the planned fixes, changing nothing.
