@@ -149,3 +149,42 @@ and its JSON is identical to a run where GitHub is unreachable. Only the two
 checkouts without an upstream branch were still fetched; their fetches overlap
 with the query.
 
+
+## Fewer Git processes per clean checkout
+
+Cached status now reads HEAD, the branch's upstream position, stashes and dirty
+entries from one `git status --porcelain=v2 --branch --show-stash -z` call, and
+reads index flags and submodule modes from one `ls-files -v -s` listing. A single
+configured remote needs no branch-remote lookup, the linked-worktree listing runs
+only when `<common-dir>/worktrees` exists, and `refs/remotes/<remote>/HEAD` is read
+through `gix`, falling back to Git when that read declines. Safety checks,
+mutations and the authoritative pre-mutation checks in `sync` are unchanged and
+still use the Git CLI.
+
+Measured on 2026-11-08 with the same Apple Silicon Mac, 100 clean clones of one
+local bare remote, no network, warm caches and seven measured repetitions after a
+warm-up
+([raw samples](2026-11-08-macos-arm64-status-git-processes.json)). The baseline is
+the committed revision before this change, built in release mode. Both versions
+produced identical JSON in every mode.
+
+| `repot status` | before | after | speedup |
+| --- | ---: | ---: | ---: |
+| `--no-fetch --jobs 1` median | 6.48 s | 1.62 s | 4.0x |
+| `--no-fetch --jobs 8` median | 2.47 s | 0.76 s | 3.2x |
+| fetch from local remote, `--jobs 8` median | 3.72 s | 2.19 s | 1.7x |
+| Git processes per clean checkout, no fetch | 14 | 4 | |
+| Git processes per checkout, fetch | 18 | 9 | |
+
+The counts come from a logging `git` shim on `PATH`, so they include any Git
+child processes that resolve `git` through `PATH` (a fetch's own helpers count
+too). `tests/status_spawns.rs` enforces the no-fetch budget of four processes per
+clean checkout through the public binary.
+
+Behaviour changes, both confined to edge cases:
+
+- A branch whose name is also a tag (`main` with a `refs/tags/main`) was reported
+  with the ambiguous short name `heads/main`, so its upstream was not found. The
+  branch name now comes from `git status`, which always reports `main`.
+- A clean checkout with exactly one remote no longer reads `branch.<name>.remote`,
+  because every configuration resolves to that remote.
