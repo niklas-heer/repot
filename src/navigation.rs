@@ -35,22 +35,16 @@ pub fn select(
         })
         .collect();
     let candidates: Vec<_> = if exact.is_empty() {
-        let query = query.to_lowercase();
-        let names: Vec<_> = repositories
+        // `owner/name` or `host/owner/name`, as `repot list` prints them, select
+        // directly when only one repository has that path.
+        let by_path: Vec<_> = repositories
             .iter()
-            .filter(|repo| {
-                repo.path.file_name().is_some_and(|name| {
-                    fuzzy_matches(&name.to_string_lossy().to_lowercase(), &query)
-                })
-            })
+            .filter(|repo| !query.is_empty() && path_matches(&repo.path, roots, query))
             .collect();
-        if names.is_empty() {
-            repositories
-                .iter()
-                .filter(|repo| fuzzy_matches(&repo.path.to_string_lossy().to_lowercase(), &query))
-                .collect()
+        if by_path.len() == 1 {
+            by_path
         } else {
-            names
+            fuzzy_candidates(repositories, &query.to_lowercase())
         }
     } else {
         exact
@@ -65,6 +59,42 @@ pub fn select(
             "{} repositories match; supply an exact name or run this in a terminal",
             candidates.len()
         )),
+    }
+}
+
+/// Whether `query` is the root-relative path of `path` or its trailing whole
+/// components. Paths outside every root are compared as they are.
+fn path_matches(path: &Path, roots: &[PathBuf], query: &str) -> bool {
+    let relative = roots
+        .iter()
+        .find_map(|root| {
+            let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
+            path.strip_prefix(&canonical)
+                .or_else(|_| path.strip_prefix(root))
+                .ok()
+        })
+        .unwrap_or(path);
+    relative.ends_with(query)
+}
+
+/// Repositories whose file name or, failing that, whole path fuzzy-matches the
+/// lowercased query.
+fn fuzzy_candidates<'a>(repositories: &'a [Repository], query: &str) -> Vec<&'a Repository> {
+    let names: Vec<_> = repositories
+        .iter()
+        .filter(|repo| {
+            repo.path
+                .file_name()
+                .is_some_and(|name| fuzzy_matches(&name.to_string_lossy().to_lowercase(), query))
+        })
+        .collect();
+    if names.is_empty() {
+        repositories
+            .iter()
+            .filter(|repo| fuzzy_matches(&repo.path.to_string_lossy().to_lowercase(), query))
+            .collect()
+    } else {
+        names
     }
 }
 
