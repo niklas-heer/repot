@@ -309,7 +309,7 @@ repot doctor --offline    # local checks only
 repot doctor --json
 repot doctor --fix        # apply fixes, asking before each one
 repot doctor --fix --dry-run  # show the planned fixes and skips, change nothing
-repot doctor --fix --yes  # apply without asking; skips checkouts with unique work
+repot doctor --fix --yes  # apply without asking; never archives a checkout with unique work
 ```
 
 | Finding | Meaning | Suggested fix |
