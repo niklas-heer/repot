@@ -42,20 +42,27 @@ fn git(path: &Path, args: &[&str]) -> Option<String> {
     process::git_optional(path, args).ok().flatten()
 }
 
-/// Drop credentials from HTTP remotes, where tokens are often embedded as the
-/// user name. SSH user names such as `git@` are not secrets and stay.
+/// The one redaction used wherever a remote URL is displayed. HTTP(S) remotes
+/// lose all user information, because tokens are often the user name. Other
+/// `scheme://` remotes keep the user name (`git@` is not a secret) and lose any
+/// password. Every `scheme://` URL loses its query and fragment, which can carry
+/// tokens. scp-like `user@host:path` remotes have no scheme and stay as written.
 pub fn public_url(url: &str) -> String {
-    if let Some((scheme, rest)) = url
-        .split_once("://")
-        .filter(|(scheme, _)| matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https"))
-    {
-        let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
-        let host = authority
-            .rsplit_once('@')
-            .map_or(authority, |(_, host)| host);
-        return ui::visible(&format!("{scheme}://{host}/{path}"));
-    }
-    ui::visible(url)
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return ui::visible(url);
+    };
+    let web = matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https");
+    let rest = rest.split(['?', '#']).next().unwrap_or_default();
+    let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let authority = match authority.rsplit_once('@') {
+        None => authority.to_owned(),
+        Some((_, host)) if web => host.to_owned(),
+        Some((userinfo, host)) => {
+            let user = userinfo.split_once(':').map_or(userinfo, |(user, _)| user);
+            format!("{user}@{host}")
+        }
+    };
+    ui::visible(&format!("{scheme}://{authority}/{path}"))
 }
 
 pub fn gather(path: &Path, visits: Option<&Visits>) -> Info {
@@ -286,8 +293,24 @@ mod tests {
             "https://example.com/owner/repo"
         );
         assert_eq!(
+            public_url("https://x-access-token:FAKE@example.com/owner/repo.git"),
+            "https://example.com/owner/repo.git"
+        );
+        assert_eq!(
+            public_url("https://oauth2:FAKE@example.com/owner/repo.git"),
+            "https://example.com/owner/repo.git"
+        );
+        assert_eq!(
+            public_url("https://example.com/team/project.git?access_token=FAKE#FAKE"),
+            "https://example.com/team/project.git"
+        );
+        assert_eq!(
             public_url("ssh://git@example.com/owner/repo"),
             "ssh://git@example.com/owner/repo"
+        );
+        assert_eq!(
+            public_url("ssh://deploy:FAKE@example.com/owner/repo?x=FAKE"),
+            "ssh://deploy@example.com/owner/repo"
         );
         assert_eq!(
             public_url("git@github.com:owner/repo.git"),
