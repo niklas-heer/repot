@@ -52,14 +52,16 @@ pub fn public_url(url: &str) -> String {
         return ui::visible(url);
     };
     let web = matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https");
-    let rest = rest.split(['?', '#']).next().unwrap_or_default();
+    // User information goes first: an unencoded password may contain `?` or `#`.
     let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let without_query = |text: &str| text.split(['?', '#']).next().unwrap_or_default().to_owned();
+    let path = without_query(path);
     let authority = match authority.rsplit_once('@') {
-        None => authority.to_owned(),
-        Some((_, host)) if web => host.to_owned(),
+        None => without_query(authority),
+        Some((_, host)) if web => without_query(host),
         Some((userinfo, host)) => {
-            let user = userinfo.split_once(':').map_or(userinfo, |(user, _)| user);
-            format!("{user}@{host}")
+            let user = userinfo.split([':', '?', '#']).next().unwrap_or_default();
+            format!("{user}@{}", without_query(host))
         }
     };
     ui::visible(&format!("{scheme}://{authority}/{path}"))
@@ -311,6 +313,19 @@ mod tests {
         assert_eq!(
             public_url("ssh://deploy:FAKE@example.com/owner/repo?x=FAKE"),
             "ssh://deploy@example.com/owner/repo"
+        );
+        // An unencoded `#` or `?` in the password must not end the user information early.
+        assert_eq!(
+            public_url("https://u:p#FAKE@example.com/owner/repo"),
+            "https://example.com/owner/repo"
+        );
+        assert_eq!(
+            public_url("ssh://deploy:p?FAKE@example.com/owner/repo"),
+            "ssh://deploy@example.com/owner/repo"
+        );
+        assert_eq!(
+            public_url("https://example.com?token=FAKE"),
+            "https://example.com/"
         );
         assert_eq!(
             public_url("git@github.com:owner/repo.git"),

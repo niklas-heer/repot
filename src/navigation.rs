@@ -37,9 +37,16 @@ pub fn select(
     let candidates: Vec<_> = if exact.is_empty() {
         // `owner/name` or `host/owner/name`, as `repot list` prints them, select
         // directly when only one repository has that path.
+        let roots: Vec<_> = roots
+            .iter()
+            .map(|root| {
+                let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
+                (root.clone(), canonical)
+            })
+            .collect();
         let by_path: Vec<_> = repositories
             .iter()
-            .filter(|repo| !query.is_empty() && path_matches(&repo.path, roots, query))
+            .filter(|repo| !query.is_empty() && path_matches(&repo.path, &roots, query))
             .collect();
         if by_path.len() == 1 {
             by_path
@@ -64,12 +71,11 @@ pub fn select(
 
 /// Whether `query` is the root-relative path of `path` or its trailing whole
 /// components. Paths outside every root are compared as they are.
-fn path_matches(path: &Path, roots: &[PathBuf], query: &str) -> bool {
+fn path_matches(path: &Path, roots: &[(PathBuf, PathBuf)], query: &str) -> bool {
     let relative = roots
         .iter()
-        .find_map(|root| {
-            let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
-            path.strip_prefix(&canonical)
+        .find_map(|(root, canonical)| {
+            path.strip_prefix(canonical)
                 .or_else(|_| path.strip_prefix(root))
                 .ok()
         })
