@@ -75,8 +75,8 @@ the checked-in release notes.
 Homebrew distribution lives in
 [niklas-heer/homebrew-tap](https://github.com/niklas-heer/homebrew-tap). Its
 **Update repot** workflow checks the latest published release hourly, generates
-the formula from `SHA256SUMS`, installs and tests it on macOS and Linux, ARM64
-and x86-64, and opens a pull request. Merge that pull request to publish the
+the formula from `SHA256SUMS`, installs and tests it on Apple silicon macOS and
+on Linux (ARM64 and x86-64), and opens a pull request. Merge that pull request to publish the
 formula; run the workflow manually to skip the wait. This repository keeps only
 `tap_migrations.json`, which moves installations from the former
 `niklas-heer/repot` tap.
