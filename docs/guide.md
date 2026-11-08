@@ -182,7 +182,17 @@ names, including in dry-runs, so a successful operation remains discoverable.
 repot status --json
 repot sync --dry-run
 repot sync --jobs 24 --timeout 30
+repot sync .                  # only the checkout you are in
+repot status alpha --json     # only repositories matching "alpha"
 ```
+
+Both commands take optional `QUERY` arguments to limit them to some repositories.
+A query matches names exactly as `repot list <query>` does, so one that matches
+several repositories selects all of them. `.`, a path such as `../project` or
+`~/src/project`, or an existing directory selects the checkout that contains it.
+Selection happens before any fetch: unselected checkouts are never touched. A
+query that matches nothing prints a hint and exits `2`, changing nothing. The
+selection works with `--dry-run`, `--json` and every safety rule unchanged.
 
 Status fetches the relevant remote for each checkout with bounded parallelism
 (24 at a time by default) and shows a live counter while it works. Each checkout
@@ -209,8 +219,9 @@ Host github.com
   ControlMaster auto
   ControlPath ~/.ssh/control-%C
   ControlPersist 60
-``` In a
-terminal, the report groups repositories by what they need: **Failed**, **Held
+```
+
+In a terminal, the report groups repositories by what they need: **Failed**, **Held
 back by local changes** (behind, but uncommitted work blocks a fast-forward),
 **Needs review**, **Ready to push**, **Ready to update** (or **Updated** after a
 sync), **Work in progress** (nothing new upstream, only your own uncommitted work
@@ -218,9 +229,16 @@ or stashes), and a compact **Up to date** summary. Each row shows the branch,
 commits behind (↓) or ahead (↑), and staged, modified, untracked and stashed work,
 followed by a concrete suggestion such as `git push -u origin feature` for an
 unpushed branch or `repot publish` for a checkout without a remote. The grouping
-is presentation only: JSON `action` values and exit codes are unchanged. The footer suggests the next step, such as
-`repot sync`. Piped output keeps one tab-separated line per repository for
-scripts, and `--json` stays the stable machine interface.
+is presentation only: JSON `action` values and exit codes are unchanged. The footer
+suggests the next step, such as `repot sync`.
+
+Names in every group are listed in natural order, so `repo2` comes before
+`repo10`. The **Up to date** group is previewed when it holds more than 24
+repositories: the count, the first eight names and `… and N more (use --verbose
+to list all)`. Pass `--verbose` to `status` or `sync` to list all of them.
+Piped output keeps one tab-separated line per repository, in path order, for
+scripts, and `--json` stays the stable machine interface; neither is ever
+compacted.
 `--no-fetch` or `status --dry-run` uses cached tracking refs. `sync --dry-run` also uses cached refs and
 prints that limitation; it does not fetch, write refs, or change the working tree.
 JSON is a sorted array with `path`, `state`, `action`, `branch`, dirty counts,
@@ -234,8 +252,9 @@ pruning, or an exact merged GitHub PR head and default base through optional `gh
 An ahead/diverged default branch or one checked out in another worktree blocks
 return. Existing feature branches and their commits are retained.
 
-Exit codes: `0` completed, `1` operational failure, `2` invalid usage, `3` manual
-review or push needed. Failures take precedence over review in a mixed batch.
+Exit codes: `0` completed, `1` operational failure, `2` invalid usage (including a
+status or sync query that matches no repository), `3` manual review or push
+needed. Failures take precedence over review in a mixed batch.
 
 ## Scratch projects and publishing
 
