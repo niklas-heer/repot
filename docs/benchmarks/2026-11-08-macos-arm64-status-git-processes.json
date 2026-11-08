@@ -1,0 +1,121 @@
+{
+  "repositories": 100,
+  "repetitions": 7,
+  "warmups": 1,
+  "network": "none (local bare remote)",
+  "base_sha256": "fa347d0e2d23747a806c445cc011e79ee7261b9716384736f9471df4a85c20bc",
+  "new_sha256": "c66855a97f67b2a17b63156c1c7a1bd2b8a9b012343602604cc4cd68579ca129",
+  "git": "git version 2.55.0",
+  "git_spawns": {
+    "cached_jobs1/base": {
+      "git_spawns": 1400,
+      "per_checkout": 14.0
+    },
+    "cached_jobs1/new": {
+      "git_spawns": 400,
+      "per_checkout": 4.0
+    },
+    "cached_jobs8/base": {
+      "git_spawns": 1400,
+      "per_checkout": 14.0
+    },
+    "cached_jobs8/new": {
+      "git_spawns": 400,
+      "per_checkout": 4.0
+    },
+    "fetch_jobs8/base": {
+      "git_spawns": 1800,
+      "per_checkout": 18.0
+    },
+    "fetch_jobs8/new": {
+      "git_spawns": 900,
+      "per_checkout": 9.0
+    }
+  },
+  "measurements": {
+    "cached_jobs1/base": {
+      "median_ms": 6480.5,
+      "min_ms": 5026.1,
+      "max_ms": 9130.2,
+      "samples_ms": [
+        9130.2,
+        5039.2,
+        5026.1,
+        6414.4,
+        7832.6,
+        7898.5,
+        6480.5
+      ]
+    },
+    "cached_jobs1/new": {
+      "median_ms": 1621.2,
+      "min_ms": 1556.6,
+      "max_ms": 5263.0,
+      "samples_ms": [
+        1593.8,
+        1556.6,
+        1586.0,
+        1621.2,
+        5263.0,
+        3890.2,
+        3165.3
+      ]
+    },
+    "cached_jobs8/base": {
+      "median_ms": 2469.1,
+      "min_ms": 2152.9,
+      "max_ms": 2592.4,
+      "samples_ms": [
+        2451.9,
+        2152.9,
+        2539.2,
+        2592.4,
+        2469.1,
+        2428.7,
+        2480.5
+      ]
+    },
+    "cached_jobs8/new": {
+      "median_ms": 760.1,
+      "min_ms": 593.7,
+      "max_ms": 830.6,
+      "samples_ms": [
+        830.6,
+        593.7,
+        707.3,
+        768.9,
+        760.1,
+        751.2,
+        771.9
+      ]
+    },
+    "fetch_jobs8/base": {
+      "median_ms": 3718.2,
+      "min_ms": 3646.5,
+      "max_ms": 3851.0,
+      "samples_ms": [
+        3662.2,
+        3732.0,
+        3720.3,
+        3646.5,
+        3649.7,
+        3718.2,
+        3851.0
+      ]
+    },
+    "fetch_jobs8/new": {
+      "median_ms": 2191.3,
+      "min_ms": 2161.3,
+      "max_ms": 2516.6,
+      "samples_ms": [
+        2191.3,
+        2228.2,
+        2181.2,
+        2161.3,
+        2254.3,
+        2166.2,
+        2516.6
+      ]
+    }
+  }
+}
