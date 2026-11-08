@@ -127,9 +127,11 @@ Regenerate the file after upgrading repot to pick up wrapper changes.
 
 Nushell treats a non-zero exit as an error, so a report command that exits 3 (review
 needed) stops a script. Read the exact status with `repot status --json | complete`.
-Commands that can change directory (`cd`, `clone`, `new`, `publish`, `adopt`, `create`,
-`trash restore`) return their output as a value: nu prints it at the prompt and `let`
-captures it, but a script must `print` it to show it.
+Commands that can change directory (`cd`, `clone`, `new`, `publish`, `adopt`,
+`create`, `migrate`, `trash restore`) are wrapped: they stay attached to the
+terminal, and with `--json` they return the report as a value that `let` can
+capture. Put global options such as `--manifest` after the subcommand
+(`repot cd --manifest PATH query`). Every other command runs the binary directly.
 
 ### Completions
 
