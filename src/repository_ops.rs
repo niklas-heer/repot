@@ -84,16 +84,7 @@ pub fn remove(config: &Config, options: &RemoveOptions) -> Result<u8> {
         [] => return Err("no repository matches; use repot list to choose one".into()),
         _ => return Err("multiple repositories match; supply an absolute checkout path".into()),
     };
-    let bare = process::git(source, &["rev-parse", "--is-bare-repository"])? == "true";
-    let root = config
-        .roots
-        .iter()
-        .rev()
-        .find(|root| source.starts_with(root))
-        .map_or_else(|| config.primary_root(), |root| Ok(root.as_path()))?;
-    let archive_root = root.join(".repot-trash");
-    validate_archive_root(&archive_root)?;
-    preflight(source, &archive_root.join("pending/repo"), bare)?;
+    let (bare, archive_root) = prepare_remove(config, source)?;
     if options.dry_run {
         return render(
             &[Report {
@@ -257,6 +248,27 @@ fn read_metadata(directory: &Path) -> Result<Metadata> {
         return Err("unsupported archive metadata".into());
     }
     Ok(metadata)
+}
+
+/// The checks `remove` runs before moving anything: whether the checkout is
+/// bare, and the archive directory it would move into.
+fn prepare_remove(config: &Config, source: &Path) -> Result<(bool, PathBuf)> {
+    let bare = process::git(source, &["rev-parse", "--is-bare-repository"])? == "true";
+    let root = config
+        .roots
+        .iter()
+        .rev()
+        .find(|root| source.starts_with(root))
+        .map_or_else(|| config.primary_root(), |root| Ok(root.as_path()))?;
+    let archive_root = root.join(".repot-trash");
+    validate_archive_root(&archive_root)?;
+    preflight(source, &archive_root.join("pending/repo"), bare)?;
+    Ok((bare, archive_root))
+}
+
+/// Runs the checks `remove` would run for this checkout, changing nothing.
+pub fn check_remove(config: &Config, source: &Path) -> Result<()> {
+    prepare_remove(config, source).map(|_| ())
 }
 
 fn validate_archive_root(path: &Path) -> Result<()> {

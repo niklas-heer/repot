@@ -287,6 +287,7 @@ repot doctor              # asks GitHub through gh when it is installed
 repot doctor --offline    # local checks only
 repot doctor --json
 repot doctor --fix        # apply fixes, asking before each one
+repot doctor --fix --dry-run  # show the planned fixes and skips, change nothing
 repot doctor --fix --yes  # apply without asking; skips checkouts with unique work
 ```
 
@@ -300,7 +301,9 @@ repot doctor --fix --yes  # apply without asking; skips checkouts with unique wo
 
 For duplicates, the checkout already at its current name's location is kept.
 Before suggesting removal, doctor lists work that exists only in the stale copy:
-changed files, stashes, unpushed commits and linked worktrees. `repot rm`
+changed files, stashes, unpushed commits (with the local branches holding them)
+and linked worktrees. If a checkout cannot be inspected, that counts as work to
+review, and `--fix --yes` leaves it alone. `repot rm`
 archives the entire checkout, so `repot trash restore` can bring it back. Doctor
 exits 3 when it has findings and 0 when everything is where it belongs.
 

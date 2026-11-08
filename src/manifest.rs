@@ -192,6 +192,28 @@ fn unchanged_manifest(path: &Path, original: &str) -> Result<()> {
     Ok(())
 }
 
+/// The checks `adopt` runs for `source` at the place `url` belongs, without
+/// moving or registering anything.
+pub fn check_adopt(config: &Config, source: &Path, url: &str) -> Result<()> {
+    let destination = config.destination(url)?;
+    let moving = source
+        != destination
+            .canonicalize()
+            .unwrap_or_else(|_| destination.clone());
+    if moving {
+        lifecycle::preflight_move(source, &destination)?;
+    }
+    let entry = RepoEntry {
+        url: url.to_owned(),
+        path: None,
+        restore: true,
+    };
+    validate_entry(&entry)?;
+    let manifest_path = manifest_target(&config.manifest_path)?;
+    let (latest, original) = read_manifest(config, &manifest_path)?;
+    edit_manifest(&latest, &original, source, &destination, &entry).map(|_| ())
+}
+
 fn remote(path: &Path) -> Result<String> {
     let remotes = process::git(path, &["remote"])?;
     if remotes.is_empty() {
