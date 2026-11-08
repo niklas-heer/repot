@@ -670,6 +670,110 @@ fn confirmed(
             == Some(&github.default_tip))
 }
 
+/// What one `git status` call says about a checkout: HEAD, dirty entries,
+/// stashes and the position against the upstream when it resolves.
+struct Snapshot {
+    /// Short branch name; `None` when HEAD is detached.
+    branch: Option<String>,
+    /// `None` when the branch has no commits yet.
+    head: Option<String>,
+    dirty: Dirty,
+    stashes: usize,
+    /// Present only when an upstream exists and resolves, as Git reports it.
+    ahead_behind: Option<(usize, usize)>,
+}
+
+fn read_snapshot(path: &Path, timeout: Duration) -> Result<Snapshot> {
+    parse_snapshot(&required(
+        path,
+        &[
+            "status",
+            "--porcelain=v2",
+            "--branch",
+            "--show-stash",
+            "-z",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ],
+        timeout,
+    )?)
+}
+
+/// Parses `--porcelain=v2 --branch --show-stash -z`. Counting matches `dirty`:
+/// an entry is untracked only when both columns are `?`, and a rename or copy
+/// consumes its source path record.
+fn parse_snapshot(output: &str) -> Result<Snapshot> {
+    let mut snapshot = Snapshot {
+        branch: None,
+        head: None,
+        dirty: Dirty::default(),
+        stashes: 0,
+        ahead_behind: None,
+    };
+    let mut records = output.split('\0').filter(|record| !record.is_empty());
+    while let Some(record) = records.next() {
+        if let Some(header) = record.strip_prefix("# ") {
+            if let Some(name) = header.strip_prefix("branch.head ") {
+                snapshot.branch = (name != "(detached)").then(|| name.to_owned());
+            } else if let Some(oid) = header.strip_prefix("branch.oid ") {
+                snapshot.head = (oid != "(initial)").then(|| oid.to_owned());
+            } else if let Some(counts) = header.strip_prefix("branch.ab ") {
+                let mut counts = counts.split_whitespace();
+                let ahead = counts
+                    .next()
+                    .and_then(|value| value.strip_prefix('+'))
+                    .and_then(|value| value.parse().ok())
+                    .ok_or("invalid ahead count")?;
+                let behind = counts
+                    .next()
+                    .and_then(|value| value.strip_prefix('-'))
+                    .and_then(|value| value.parse().ok())
+                    .ok_or("invalid behind count")?;
+                snapshot.ahead_behind = Some((ahead, behind));
+            } else if let Some(count) = header.strip_prefix("stash ") {
+                snapshot.stashes = count.parse().map_err(|_| "invalid stash count")?;
+            }
+            continue;
+        }
+        let mut fields = record.split(' ');
+        match fields.next() {
+            Some("?") => {
+                snapshot.dirty.untracked = snapshot.dirty.untracked.saturating_add(1);
+            }
+            Some(kind @ ("1" | "2" | "u")) => {
+                let columns = fields.next().ok_or("invalid status record")?;
+                let mut columns = columns.chars();
+                let staged = columns.next().ok_or("invalid status record")?;
+                let unstaged = columns.next().ok_or("invalid status record")?;
+                if staged != '.' {
+                    snapshot.dirty.staged = snapshot.dirty.staged.saturating_add(1);
+                }
+                if unstaged != '.' {
+                    snapshot.dirty.unstaged = snapshot.dirty.unstaged.saturating_add(1);
+                }
+                if kind == "2" {
+                    records.next().ok_or("missing rename source")?;
+                }
+            }
+            _ => return Err("invalid status record".into()),
+        }
+    }
+    Ok(snapshot)
+}
+
+/// Would `git worktree list` show a branch in another worktree? Git keeps
+/// linked worktrees under the common directory, so without that directory the
+/// listing cannot contain one and need not be run.
+fn may_have_linked_worktrees(layout: Option<&crate::git_read::Layout>) -> bool {
+    layout.is_none_or(|layout| {
+        layout
+            .common_dir()
+            .join("worktrees")
+            .try_exists()
+            .unwrap_or(true)
+    })
+}
+
 pub fn inspect(
     path: &Path,
     config: &Config,
@@ -678,32 +782,20 @@ pub fn inspect(
     github: Option<&github::Answer>,
 ) -> Result<Report> {
     let timeout = options.timeout;
+    let layout = crate::git_read::Layout::open(path);
     let mut report = Report::empty(path);
-    report.branch = probe(
-        path,
-        &["symbolic-ref", "--quiet", "--short", "HEAD"],
-        timeout,
-    )?;
-    report.dirty = dirty(&required(
-        path,
-        &[
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=all",
-            "--ignore-submodules=none",
-        ],
-        timeout,
-    )?)?;
-    report.stashes = required(path, &["stash", "list", "--format=%H"], timeout)?
-        .lines()
-        .count();
+    // Fetching changes refs, not the worktree, index or stashes, so these facts
+    // are read before any fetch and the report keeps them on fetch failure.
+    let mut snapshot = read_snapshot(path, timeout)?;
+    report.branch.clone_from(&snapshot.branch);
+    report.dirty = snapshot.dirty.clone();
+    report.stashes = snapshot.stashes;
     let remotes = required(path, &["remote"], timeout)?;
     if remotes.is_empty() {
         report.reason = "no remote configured".into();
         return Ok(report);
     }
-    let remote = choose_remote(path, report.branch.as_deref(), &remotes, timeout)?;
+    let remote = choose_remote(path, snapshot.branch.as_deref(), &remotes, timeout)?;
     report.remote = Some(remote.clone());
     report.confirmed = fetch && confirmed(path, &remote, github, timeout)?;
     if fetch
@@ -733,12 +825,16 @@ pub fn inspect(
         report.fail("fetch failed or timed out; inspect the remote with git");
         return Ok(report);
     }
-    let Some(branch) = report.branch.clone() else {
+    if fetch && !report.confirmed {
+        // The ahead/behind counts must describe the refs the fetch just wrote.
+        snapshot = read_snapshot(path, timeout)?;
+    }
+    let Some(branch) = snapshot.branch.clone() else {
         report.state = "detached".into();
         report.reason = "detached HEAD; choose a branch manually".into();
         return Ok(report);
     };
-    let Some(head) = probe(path, &["rev-parse", "--verify", "--quiet", "HEAD"], timeout)? else {
+    let Some(head) = snapshot.head.clone() else {
         report.state = "no-upstream".into();
         report.reason = "branch has no commits".into();
         return Ok(report);
@@ -757,39 +853,13 @@ pub fn inspect(
         report.reason = "upstream is not a remote-tracking branch".into();
         return Ok(report);
     }
-    let upstream_oid = if upstream.is_empty() {
-        None
-    } else {
-        probe(
-            path,
-            &["rev-parse", "--verify", "--quiet", &upstream],
-            timeout,
-        )?
-    };
+    // Git omits the ahead/behind pair when the upstream does not resolve.
+    let upstream_resolves = !upstream.is_empty() && snapshot.ahead_behind.is_some();
     report.state = "no-upstream".into();
-    if let Some(oid) = &upstream_oid {
-        let counts = required(
-            path,
-            &[
-                "rev-list",
-                "--left-right",
-                "--count",
-                &format!("{head}...{oid}"),
-            ],
-            timeout,
-        )?;
-        let mut counts = counts.split_whitespace();
-        report.ahead = counts
-            .next()
-            .ok_or("missing ahead count")?
-            .parse()
-            .map_err(|_| "invalid ahead count")?;
-        report.behind = counts
-            .next()
-            .ok_or("missing behind count")?
-            .parse()
-            .map_err(|_| "invalid behind count")?;
-        report.state = match (report.ahead, report.behind) {
+    if let Some((ahead, behind)) = snapshot.ahead_behind.filter(|_| upstream_resolves) {
+        report.ahead = ahead;
+        report.behind = behind;
+        report.state = match (ahead, behind) {
             (0, 0) => "synced",
             (0, _) => "behind",
             (_, 0) => "ahead",
@@ -801,17 +871,18 @@ pub fn inspect(
         report.reason = "working tree has local changes".into();
         return Ok(report);
     }
-    if let Some(reason) = blocked(path, timeout)? {
+    if let Some(reason) = blocked_for_inspection(path, &branch, layout.as_ref(), timeout)? {
         report.reason = reason.into();
         return Ok(report);
     }
     match return_plan(
         path,
+        layout.as_ref(),
         &branch,
         &head,
         &remote,
         &upstream,
-        upstream_oid.as_deref(),
+        upstream_resolves,
         options,
         fetch,
         github.filter(|github| github.remote == remote),
@@ -841,7 +912,13 @@ pub fn inspect(
             report.reason = "up to date".into();
         }
         "behind" => {
-            if let Some(target) = &upstream_oid
+            // Only a behind checkout needs the target object id.
+            let target = probe(
+                path,
+                &["rev-parse", "--verify", "--quiet", &upstream],
+                timeout,
+            )?;
+            if let Some(target) = &target
                 && ignored_collision(path, target, timeout)?
             {
                 report.reason = "ignored files would be overwritten".into();
@@ -849,7 +926,7 @@ pub fn inspect(
             }
             report.action = "pull".into();
             report.reason = "fast-forward current branch".into();
-            report.plan = upstream_oid.map(|target| Plan {
+            report.plan = target.map(|target| Plan {
                 head,
                 target,
                 reference: upstream,
@@ -868,12 +945,71 @@ pub fn inspect(
     Ok(report)
 }
 
+/// The index and HEAD checks of `blocked`, arranged for inspection: one
+/// `ls-files` listing carries both the index flags and the submodule modes,
+/// and the worktree listing runs only when linked worktrees can exist.
+fn blocked_for_inspection(
+    path: &Path,
+    branch: &str,
+    layout: Option<&crate::git_read::Layout>,
+    timeout: Duration,
+) -> Result<Option<&'static str>> {
+    let entries = required(path, &["ls-files", "-v", "-s", "-z"], timeout)?;
+    let mut submodule = false;
+    for entry in entries.split('\0').filter(|entry| !entry.is_empty()) {
+        if entry
+            .chars()
+            .next()
+            .is_some_and(|flag| flag == 'S' || flag.is_ascii_lowercase())
+        {
+            return Ok(Some("index flags can hide local edits; review manually"));
+        }
+        if entry
+            .split_once(' ')
+            .is_some_and(|(_, rest)| rest.starts_with("160000 "))
+        {
+            submodule = true;
+        }
+    }
+    if may_have_linked_worktrees(layout) {
+        let worktrees = required(path, &["worktree", "list", "--porcelain", "-z"], timeout)?;
+        let reference = format!("branch refs/heads/{branch}");
+        if worktrees
+            .split('\0')
+            .filter(|line| *line == reference)
+            .count()
+            > 1
+        {
+            return Ok(Some("current branch is checked out in another worktree"));
+        }
+    }
+    match layout.and_then(crate::git_read::Layout::operation_in_progress) {
+        Some(true) => return Ok(Some("Git operation in progress")),
+        Some(false) => {}
+        None => {
+            for marker in crate::git_read::OPERATION_MARKERS {
+                let location = required(path, &["rev-parse", "--git-path", marker], timeout)?;
+                if path.join(location).exists() {
+                    return Ok(Some("Git operation in progress"));
+                }
+            }
+        }
+    }
+    Ok(submodule.then_some("submodules require manual review"))
+}
+
 fn choose_remote(
     path: &Path,
     branch: Option<&str>,
     remotes: &str,
     timeout: Duration,
 ) -> Result<String> {
+    // With one remote, every branch configuration resolves to it: a configured
+    // name must be a listed remote, and the fallback is the first listed one.
+    let mut names = remotes.lines();
+    if let (Some(only), None) = (names.next(), names.next()) {
+        return Ok(only.into());
+    }
     if let Some(branch) = branch
         && let Some(remote) = probe(
             path,
@@ -1073,6 +1209,7 @@ fn owned(path: &Path, remote: &str, config: &Config, timeout: Duration) -> Resul
 
 fn default_branch(
     path: &Path,
+    layout: Option<&crate::git_read::Layout>,
     remote: &str,
     options: &Options,
     fetch: bool,
@@ -1090,12 +1227,16 @@ fn default_branch(
         }));
     }
     let prefix = format!("refs/remotes/{remote}/");
-    Ok(probe(
-        path,
-        &["symbolic-ref", "--quiet", &format!("{prefix}HEAD")],
-        options.timeout,
-    )?
-    .and_then(|reference| reference.strip_prefix(&prefix).map(str::to_owned)))
+    let reference = format!("{prefix}HEAD");
+    let target = match layout.and_then(|layout| layout.symbolic_target(&reference)) {
+        Some(target) => Some(target),
+        None => probe(
+            path,
+            &["symbolic-ref", "--quiet", &reference],
+            options.timeout,
+        )?,
+    };
+    Ok(target.and_then(|reference| reference.strip_prefix(&prefix).map(str::to_owned)))
 }
 
 enum Return {
@@ -1110,11 +1251,12 @@ enum Return {
 )]
 fn return_plan(
     path: &Path,
+    layout: Option<&crate::git_read::Layout>,
     branch: &str,
     head: &str,
     remote: &str,
     upstream: &str,
-    upstream_oid: Option<&str>,
+    upstream_resolves: bool,
     options: &Options,
     fetch: bool,
     github: Option<&github::Answer>,
@@ -1129,10 +1271,10 @@ fn return_plan(
     let default = if let Some(github) = github {
         github.default_branch.clone()
     } else {
-        if default_branch(path, remote, options, false)?.as_deref() == Some(branch) {
+        if default_branch(path, layout, remote, options, false)?.as_deref() == Some(branch) {
             return Ok(Return::None);
         }
-        let Some(default) = default_branch(path, remote, options, fetch)? else {
+        let Some(default) = default_branch(path, layout, remote, options, fetch)? else {
             return Ok(Return::None);
         };
         default
@@ -1160,7 +1302,7 @@ fn return_plan(
         timeout,
     )?
     .is_some();
-    let pruned = fetch && !upstream.is_empty() && upstream_oid.is_none();
+    let pruned = fetch && !upstream.is_empty() && !upstream_resolves;
     let patch_merged = if !ancestor && pruned {
         let range = format!("{target}..{head}");
         required(path, &["rev-list", "--merges", &range], timeout)?.is_empty()
@@ -1200,10 +1342,12 @@ fn return_plan(
     {
         return Ok(Return::Review("default branch contains local commits"));
     }
-    let worktrees = required(path, &["worktree", "list", "--porcelain", "-z"], timeout)?;
-    if worktrees
-        .split('\0')
-        .any(|line| line == format!("branch {reference}"))
+    // The current branch is not the default one, so only a linked worktree can
+    // hold the default branch.
+    if may_have_linked_worktrees(layout)
+        && required(path, &["worktree", "list", "--porcelain", "-z"], timeout)?
+            .split('\0')
+            .any(|line| line == format!("branch {reference}"))
     {
         return Ok(Return::Review(
             "default branch is checked out in another worktree",

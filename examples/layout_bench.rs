@@ -1,5 +1,9 @@
 //! Exact operation-marker microbenchmark; use scripts/benchmark.py for full commands.
 #[path = "../src/git_read.rs"]
+#[expect(
+    dead_code,
+    reason = "the benchmark measures operation markers; ref reads are covered by tests/git_read.rs"
+)]
 mod git_read;
 
 use std::path::{Path, PathBuf};

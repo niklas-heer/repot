@@ -4,6 +4,7 @@
 //! remain in Git. The isolated opener ignores environment path overrides and
 //! external configuration; unsupported formats fall back to Git.
 
+use gix::bstr::ByteSlice;
 use std::path::{Path, PathBuf};
 
 pub const OPERATION_MARKERS: [&str; 8] = [
@@ -21,6 +22,7 @@ pub const OPERATION_MARKERS: [&str; 8] = [
 pub struct Layout {
     git_dir: PathBuf,
     common_dir: PathBuf,
+    repository: gix::Repository,
 }
 
 impl Layout {
@@ -35,7 +37,23 @@ impl Layout {
         Some(Self {
             git_dir: repository.git_dir().into(),
             common_dir: repository.common_dir().into(),
+            repository,
         })
+    }
+
+    pub fn common_dir(&self) -> &Path {
+        &self.common_dir
+    }
+
+    /// The full name a symbolic reference points to. `None` means "ask Git".
+    pub fn symbolic_target(&self, name: &str) -> Option<String> {
+        let reference = self.repository.try_find_reference(name).ok()??;
+        match reference.target() {
+            gix::refs::TargetRef::Symbolic(target) => {
+                target.as_bstr().to_str().ok().map(str::to_owned)
+            }
+            gix::refs::TargetRef::Object(_) => None,
+        }
     }
 
     pub fn marker_path(&self, marker: &str) -> PathBuf {

@@ -160,6 +160,44 @@ mod tests {
     }
 
     #[test]
+    fn native_ref_reads_agree_with_git_or_decline() {
+        let fixture = Fixture::new(&[]);
+        let oid = fixture.git(&fixture.repo, &["rev-parse", "HEAD"]);
+        fixture.git(
+            &fixture.repo,
+            &["update-ref", "refs/remotes/origin/main", &oid],
+        );
+        fixture.git(
+            &fixture.repo,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/main",
+            ],
+        );
+        for _ in 0..2 {
+            let layout = Layout::open(&fixture.repo).expect("layout");
+            assert_eq!(
+                layout
+                    .symbolic_target("refs/remotes/origin/HEAD")
+                    .as_deref(),
+                Some("refs/remotes/origin/main")
+            );
+            assert_eq!(layout.symbolic_target("refs/remotes/origin/main"), None);
+            assert_eq!(layout.symbolic_target("refs/remotes/origin/gone"), None);
+            assert_eq!(
+                layout
+                    .common_dir()
+                    .canonicalize()
+                    .expect("native common dir"),
+                fixture.repo.join(".git").canonicalize().expect("Git dir")
+            );
+            // Packed refs are read from packed-refs, with the same answers.
+            fixture.git(&fixture.repo, &["pack-refs", "--all"]);
+        }
+    }
+
+    #[test]
     fn unsupported_configuration_is_rejected_and_corrupt_layouts_decline_native_reads() {
         let fixture = Fixture::new(&[]);
         fs::write(
