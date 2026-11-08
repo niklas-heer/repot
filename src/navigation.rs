@@ -201,15 +201,18 @@ end
 __repot_visit
 ";
 
-// Re-sourcing replaces the earlier hook: entries whose source mentions
-// `repot visit` are dropped before this one is appended.
+// Re-sourcing replaces the earlier hook. Only closures carrying the marker
+// comment are repot's; records and other closures belong to the user.
 const NU_TRACK: &str = r"
 # Remember which repositories you use, to rank `repot cd` (disable: --no-track).
 $env.config.hooks.env_change.PWD = (
     $env.config.hooks.env_change.PWD?
     | default []
-    | where {|hook| not ((view source $hook) | str contains 'repot visit') }
-    | append {|_, after| try { ^repot visit -- $after o+e>| ignore } }
+    | where {|hook| ($hook | describe) != 'closure' or not ((view source $hook) | str contains '__repot_visit_hook') }
+    | append {|_, after|
+        # __repot_visit_hook: replaced when this integration is sourced again
+        try { ^repot visit -- $after o+e>| ignore }
+    }
 )
 ";
 

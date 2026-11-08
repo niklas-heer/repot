@@ -836,13 +836,14 @@ mod tests {
             &fixture,
             "reload.nu",
             &format!(
-                "source '{init}'\nsource '{init}'\nprint ($env.config.hooks.env_change.PWD? | default [] | length)\n",
+                "$env.config.hooks.env_change.PWD = [{{condition: {{|before, after| true}}, code: {{|before, after| null}}}}, {{|before, after|\n    # the user's own hook, which mentions repot visit\n    null\n}}]\nsource '{init}'\nsource '{init}'\nprint ($env.config.hooks.env_change.PWD | length)\n",
                 init = init.display()
             ),
         );
         let output = nu_run(&fixture, &script);
         assert_success(&output, "reload");
-        assert_eq!(String::from_utf8_lossy(&output.stdout), "1\n");
+        // The user's record and closure stay; repot's hook is present once.
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "3\n");
     }
 
     #[test]
