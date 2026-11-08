@@ -4,6 +4,7 @@
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
     use std::os::unix::fs::PermissionsExt as _;
     use std::path::{Path, PathBuf};
@@ -282,5 +283,197 @@ esac
         );
         // Unique work is never touched unattended.
         assert!(retired.join("notes").exists());
+    }
+
+    /// Files and directories under the given roots, with contents, skipping
+    /// `.git/index`, which `git status` may refresh without any change of state.
+    fn snapshot(roots: &[PathBuf]) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
+        let mut state = BTreeMap::new();
+        let mut pending: Vec<PathBuf> =
+            roots.iter().filter(|root| root.exists()).cloned().collect();
+        while let Some(dir) = pending.pop() {
+            for entry in fs::read_dir(&dir).expect("readable directory") {
+                let path = entry.expect("directory entry").path();
+                let is_index = path.file_name().is_some_and(|name| name == "index")
+                    && path.parent().is_some_and(|parent| parent.ends_with(".git"));
+                if is_index {
+                    continue;
+                }
+                if path.is_dir() {
+                    state.insert(path.clone(), None);
+                    pending.push(path);
+                } else {
+                    state.insert(path.clone(), Some(fs::read(&path).expect("file")));
+                }
+            }
+        }
+        state
+    }
+
+    fn state_roots(world: &World) -> Vec<PathBuf> {
+        ["root", "config", "state"]
+            .iter()
+            .map(|relative| world.path(relative))
+            .collect()
+    }
+
+    fn outcomes(plan: &[Value]) -> Vec<(String, String, String)> {
+        plan.iter()
+            .map(|entry| {
+                (
+                    entry["kind"].as_str().expect("kind").to_owned(),
+                    entry["outcome"].as_str().expect("outcome").to_owned(),
+                    entry["reason"].as_str().unwrap_or_default().to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn fix_dry_run_plans_each_change_and_changes_nothing() {
+        let world = World::new();
+        let stale = world.checkout("github.com/owner/old", "https://github.com/owner/old.git");
+        world.checkout("github.com/owner/new", "https://github.com/owner/new.git");
+        world.checkout("github.com/owner/moved", "git@github.com:owner/moved.git");
+        let retired = world.checkout(
+            "github.com/owner/retired",
+            "https://github.com/owner/retired.git",
+        );
+        fs::write(retired.join("notes"), "only here").expect("unique work");
+        let before = snapshot(&state_roots(&world));
+
+        let (output, plan) = world.doctor(&["--fix", "--dry-run", "--yes", "--json"]);
+        assert_eq!(output.status.code(), Some(3), "one fix would be skipped");
+        assert_eq!(
+            outcomes(&plan),
+            [
+                ("duplicate".into(), "would-apply".into(), String::new()),
+                ("renamed".into(), "would-apply".into(), String::new()),
+                (
+                    "archived".into(),
+                    "would-skip".into(),
+                    "it has work that exists only there (1 changed file)".into(),
+                ),
+            ]
+        );
+        assert!(plan[1]["fix"].as_str().expect("fix").contains("adopt"));
+        assert_eq!(
+            snapshot(&state_roots(&world)),
+            before,
+            "dry run changed something"
+        );
+        assert!(stale.exists());
+        assert!(!world.path("root/.repot-trash").exists(), "archive created");
+
+        // Without --yes nothing is skipped; each fix would ask first, and a
+        // closed terminal is no reason to refuse a dry run.
+        let (output, plan) = world.doctor(&["--fix", "--dry-run", "--json"]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "nothing is skipped without --yes"
+        );
+        assert_eq!(
+            outcomes(&plan)
+                .iter()
+                .map(|plan| plan.1.as_str())
+                .collect::<Vec<_>>(),
+            ["would-ask", "would-ask", "would-ask"]
+        );
+        assert_eq!(snapshot(&state_roots(&world)), before);
+
+        let text = world
+            .command(env!("CARGO_BIN_EXE_repot"))
+            .args(["doctor", "--fix", "--dry-run", "--yes"])
+            .output()
+            .expect("repot runs");
+        let text = String::from_utf8_lossy(&text.stdout);
+        assert!(text.contains("Planned fixes"), "{text}");
+        assert!(text.contains("would apply"), "{text}");
+        assert!(text.contains("would skip"), "{text}");
+        assert!(text.contains("dry run: nothing was changed"), "{text}");
+        assert_eq!(snapshot(&state_roots(&world)), before);
+    }
+
+    #[test]
+    fn unpushed_commit_on_another_branch_is_unique_work_and_not_archived() {
+        let world = World::new();
+        world.checkout("github.com/owner/old", "https://github.com/owner/old.git");
+        let copy = world.checkout("github.com/owner/copy", "https://github.com/owner/old.git");
+        // The commit lives only on `precious`; the checkout is back on main.
+        world.git(&copy, &["checkout", "--quiet", "-b", "precious"]);
+        world.git(
+            &copy,
+            &["commit", "--quiet", "--allow-empty", "-m", "unpublished"],
+        );
+        world.git(&copy, &["checkout", "--quiet", "main"]);
+
+        let (output, findings) = world.doctor(&["--json", "--offline"]);
+        assert_eq!(output.status.code(), Some(3));
+        assert_eq!(kinds(&findings), [("duplicate".into(), "copy".into())]);
+        assert_eq!(findings[0]["local_work"], "1 unpushed commit on precious");
+
+        let text = world
+            .command(env!("CARGO_BIN_EXE_repot"))
+            .args(["doctor", "--offline"])
+            .output()
+            .expect("repot runs");
+        let text = String::from_utf8_lossy(&text.stdout);
+        assert!(
+            text.contains("only here: 1 unpushed commit on precious"),
+            "{text}"
+        );
+
+        let plan = world
+            .command(env!("CARGO_BIN_EXE_repot"))
+            .args(["doctor", "--fix", "--dry-run", "--offline", "--yes"])
+            .output()
+            .expect("repot runs");
+        let plan = String::from_utf8_lossy(&plan.stdout);
+        assert!(plan.contains("would skip"), "{plan}");
+        assert!(plan.contains("precious"), "{plan}");
+
+        let fixed = world
+            .command(env!("CARGO_BIN_EXE_repot"))
+            .args(["doctor", "--fix", "--yes", "--offline"])
+            .output()
+            .expect("repot runs");
+        let stderr = String::from_utf8_lossy(&fixed.stderr);
+        assert_eq!(fixed.status.code(), Some(3), "{stderr}");
+        assert!(stderr.contains("skipped owner/copy"), "{stderr}");
+        assert!(stderr.contains("precious"), "{stderr}");
+        assert!(
+            copy.join(".git").exists(),
+            "checkout with unique work was archived"
+        );
+        assert!(!world.path("root/.repot-trash").exists());
+    }
+
+    #[test]
+    fn checkouts_git_cannot_inspect_are_reported_and_never_archived_unattended() {
+        let world = World::new();
+        world.checkout("github.com/owner/old", "https://github.com/owner/old.git");
+        let copy = world.checkout("github.com/owner/copy", "https://github.com/owner/old.git");
+        // A corrupt index makes `git status` fail, so the work is unknown.
+        fs::write(copy.join(".git/index"), "not an index").expect("corrupt index");
+
+        let (output, findings) = world.doctor(&["--json", "--offline"]);
+        assert_eq!(output.status.code(), Some(3));
+        assert_eq!(kinds(&findings), [("duplicate".into(), "copy".into())]);
+        let work = findings[0]["local_work"].as_str().expect("unknown work");
+        assert!(work.contains("could not inspect"), "{work}");
+
+        let fixed = world
+            .command(env!("CARGO_BIN_EXE_repot"))
+            .args(["doctor", "--fix", "--yes", "--offline"])
+            .output()
+            .expect("repot runs");
+        let stderr = String::from_utf8_lossy(&fixed.stderr);
+        assert_eq!(fixed.status.code(), Some(3), "{stderr}");
+        assert!(stderr.contains("skipped owner/copy"), "{stderr}");
+        assert!(
+            copy.join(".git").exists(),
+            "uninspectable checkout was archived"
+        );
     }
 }

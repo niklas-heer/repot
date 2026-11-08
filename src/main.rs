@@ -252,7 +252,11 @@ fn load_config(cli: &Cli) -> Result<config::Config> {
         &cli.command,
         Commands::Adopt { .. }
             | Commands::Migrate(_)
-            | Commands::Doctor(doctor::Options { fix: true, .. })
+            | Commands::Doctor(doctor::Options {
+                fix: true,
+                dry_run: false,
+                ..
+            })
     ) {
         config::Config::load_for_write(cli.manifest.as_deref())
     } else {

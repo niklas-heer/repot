@@ -42,6 +42,9 @@ pub struct Options {
     /// that checkout are skipped.
     #[arg(long, short = 'y', requires = "fix")]
     pub yes: bool,
+    /// With --fix, run the same checks and show the planned fixes, changing nothing.
+    #[arg(long, requires = "fix")]
+    pub dry_run: bool,
 }
 
 /// What GitHub says about a remote.
@@ -87,7 +90,11 @@ enum Action {
     /// Archive with `repot rm`.
     Archive,
     /// Optionally point a remote at a new URL, then move with `repot adopt`.
-    Relocate { remote: Option<(String, String)> },
+    /// `url` is the remote as it will be once the fix has run.
+    Relocate {
+        remote: Option<(String, String)>,
+        url: String,
+    },
     /// Nothing to apply automatically.
     Review,
 }
@@ -149,40 +156,111 @@ fn quoted(path: &Path) -> String {
     }
 }
 
-/// Uncommitted files, stashes and commits that no remote has.
+/// Shown when Git cannot say what a checkout holds: unknown work is treated as
+/// work that needs a look, never as none.
+const UNKNOWN_WORK: &str = "could not inspect local work; review it yourself";
+
+/// Uncommitted files, stashes, commits that no remote has (with the local
+/// branches holding them) and linked worktrees. `None` means none of those.
 pub fn local_work(path: &Path) -> Option<String> {
-    let count = |args: &[&str]| {
-        process::git_optional(path, args)
-            .ok()
-            .flatten()
-            .map_or(0, |output| {
-                output.lines().filter(|line| !line.is_empty()).count()
-            })
+    inspect_work(path).map_or_else(
+        |_| Some(UNKNOWN_WORK.to_owned()),
+        |parts| (!parts.is_empty()).then(|| parts.join(", ")),
+    )
+}
+
+/// A count printed by `git`, such as `rev-list --count`.
+fn number(path: &Path, args: &[&str]) -> Result<usize> {
+    process::git(path, args)?
+        .trim()
+        .parse()
+        .map_err(|error| format!("unexpected Git output: {error}"))
+}
+
+fn inspect_work(path: &Path) -> Result<Vec<String>> {
+    let lines = |args: &[&str]| -> Result<usize> {
+        Ok(process::git(path, args)?
+            .lines()
+            .filter(|line| !line.is_empty())
+            .count())
     };
-    let changed = count(&["status", "--porcelain", "--untracked-files=normal"]);
-    let stashes = count(&["stash", "list", "--format=%H"]);
-    let unpushed = count(&["rev-list", "HEAD", "--not", "--remotes"]);
+    let changed = lines(&["status", "--porcelain", "--untracked-files=normal"])?;
+    let stashes = lines(&["stash", "list", "--format=%H"])?;
+    // Commits reachable from any local branch (or detached HEAD) that no
+    // remote-tracking ref contains. Which branches hold them is reported too.
+    let detached = process::git_optional(path, &["symbolic-ref", "--quiet", "HEAD"])?.is_none();
+    let mut candidates: Vec<(String, String)> = process::git(
+        path,
+        &["for-each-ref", "--format=%(refname)", "refs/heads/"],
+    )?
+    .lines()
+    .map(|refname| {
+        let label = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+        (refname.to_owned(), label.to_owned())
+    })
+    .collect();
+    if detached {
+        candidates.push(("HEAD".to_owned(), "detached HEAD".to_owned()));
+    }
+    let mut holders = Vec::new();
+    for (refname, label) in &candidates {
+        let count = number(
+            path,
+            &[
+                "rev-list",
+                "--count",
+                refname.as_str(),
+                "--not",
+                "--remotes",
+            ],
+        )?;
+        if count > 0 {
+            holders.push(label.as_str());
+        }
+    }
+    let mut unpushed_args = vec!["rev-list", "--count", "--branches"];
+    if detached {
+        unpushed_args.push("HEAD");
+    }
+    unpushed_args.extend(["--not", "--remotes"]);
+    let unpushed = number(path, &unpushed_args)?;
     // repot rm refuses checkouts with linked worktrees; say so up front.
-    let worktrees = process::git_optional(path, &["worktree", "list", "--porcelain"])
-        .ok()
-        .flatten()
-        .map_or(0, |list| {
-            list.lines()
-                .filter(|line| line.starts_with("worktree "))
-                .count()
-                .saturating_sub(1)
-        });
-    let parts: Vec<String> = [
+    let worktrees = process::git(path, &["worktree", "list", "--porcelain"])?
+        .lines()
+        .filter(|line| line.starts_with("worktree "))
+        .count()
+        .saturating_sub(1);
+
+    let mut parts = Vec::new();
+    for (count, one, many) in [
         (changed, "changed file", "changed files"),
         (stashes, "stash", "stashes"),
-        (unpushed, "unpushed commit", "unpushed commits"),
-        (worktrees, "linked worktree", "linked worktrees"),
-    ]
-    .into_iter()
-    .filter(|(count, _, _)| *count > 0)
-    .map(|(count, one, many)| format!("{count} {}", if count == 1 { one } else { many }))
-    .collect();
-    (!parts.is_empty()).then(|| parts.join(", "))
+    ] {
+        if count > 0 {
+            parts.push(format!("{count} {}", if count == 1 { one } else { many }));
+        }
+    }
+    if unpushed > 0 {
+        let noun = if unpushed == 1 {
+            "unpushed commit"
+        } else {
+            "unpushed commits"
+        };
+        parts.push(if holders.is_empty() {
+            format!("{unpushed} {noun}")
+        } else {
+            format!("{unpushed} {noun} on {}", holders.join(", "))
+        });
+    }
+    if worktrees > 0 {
+        let noun = if worktrees == 1 {
+            "linked worktree"
+        } else {
+            "linked worktrees"
+        };
+        parts.push(format!("{worktrees} {noun}"));
+    }
+    Ok(parts)
 }
 
 /// Where the tree says a checkout of this remote belongs, relative to a root.
@@ -285,9 +363,13 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
     };
     drop(progress);
     let findings = findings(config, &identities, &answers);
+    if options.fix && options.dry_run && options.json {
+        // The plan alone, so that the output is one JSON document.
+        return fix(config, &findings, options);
+    }
     render(&findings, identities.len(), online, options.json)?;
     if options.fix && !findings.is_empty() {
-        return apply(config, &findings, options.yes);
+        return fix(config, &findings, options);
     }
     Ok(if findings.is_empty() { 0 } else { 3 })
 }
@@ -303,31 +385,99 @@ fn confirm(question: &str) -> Result<bool> {
     Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "Yes"))
 }
 
-/// Apply fixes one by one; each goes through the same safety checks as the
-/// command it stands for.
-fn apply(config: &Config, findings: &[Finding], yes: bool) -> Result<u8> {
-    if !yes && !std::io::stdin().is_terminal() {
+/// What `--fix` does with one finding, decided right before it would run.
+enum Decision {
+    /// Left alone; the reason is shown.
+    Skip(String),
+    /// Applied; `work` is shown in the question asked first, if any.
+    Apply { work: Option<String> },
+}
+
+/// Checks a finding against the checkout as it is now, so work that appeared
+/// after the scan is never archived unattended.
+fn decide(finding: &Finding, yes: bool) -> Decision {
+    if matches!(finding.action, Action::Review) {
+        return Decision::Skip("nothing to apply automatically; look at it yourself".into());
+    }
+    let work = local_work(&finding.path);
+    if let Some(work) = work.as_ref().filter(|_| yes) {
+        return Decision::Skip(if finding.local_work.is_some() {
+            format!("it has work that exists only there ({work})")
+        } else {
+            format!("work appeared since the scan ({work})")
+        });
+    }
+    Decision::Apply { work }
+}
+
+/// Runs the checks the fix would run, without changing anything.
+fn preview(config: &Config, finding: &Finding) -> Result<()> {
+    match &finding.action {
+        Action::Archive => crate::repository_ops::check_remove(config, &finding.path),
+        Action::Relocate { url, .. } => crate::manifest::check_adopt(config, &finding.path, url),
+        Action::Review => Ok(()),
+    }
+}
+
+/// Performs one fix through the same command it stands for.
+fn execute(config: &Config, finding: &Finding) -> Result<u8> {
+    match &finding.action {
+        Action::Archive => crate::repository_ops::remove(
+            config,
+            &crate::repository_ops::RemoveOptions {
+                query: finding.path.to_string_lossy().into_owned(),
+                bare: false,
+                dry_run: false,
+                json: false,
+            },
+        ),
+        Action::Relocate { remote, .. } => remote
+            .as_ref()
+            .map_or(Ok(()), |(remote, url)| {
+                process::git(&finding.path, &["remote", "set-url", "--", remote, url]).map(|_| ())
+            })
+            .and_then(|()| crate::manifest::adopt(config, &finding.path, false, false, false)),
+        Action::Review => Ok(0),
+    }
+}
+
+/// Applies the fixes one by one, or with `--dry-run` only plans them. Each goes
+/// through the same safety checks as the command it stands for.
+fn fix(config: &Config, findings: &[Finding], options: &Options) -> Result<u8> {
+    let (yes, dry_run) = (options.yes, options.dry_run);
+    if !dry_run && !yes && !std::io::stdin().is_terminal() {
         return Err("--fix asks before each change; add --yes to apply without asking".into());
     }
+    let mut planned = Vec::new();
     let (mut applied, mut skipped) = (0_usize, 0_usize);
     for finding in findings {
         let name = ui::repository_name(&finding.path, &config.roots);
-        if matches!(finding.action, Action::Review) {
-            skipped = skipped.saturating_add(1);
-            continue;
-        }
-        if yes && finding.local_work.is_some() {
-            ui::note(
-                "·",
-                ui::DIM,
-                &format!("skipped {name}: it has work that exists only there"),
-            );
-            skipped = skipped.saturating_add(1);
+        let work = match decide(finding, yes) {
+            Decision::Skip(reason) => {
+                skipped = skipped.saturating_add(1);
+                if dry_run {
+                    planned.push(Planned::new(finding, "would-skip", Some(reason)));
+                } else {
+                    ui::note("·", ui::DIM, &format!("skipped {name}: {reason}"));
+                }
+                continue;
+            }
+            Decision::Apply { work } => work,
+        };
+        if dry_run {
+            let only_here = work.map(|work| format!("only here: {work}"));
+            match preview(config, finding) {
+                Ok(()) if yes => planned.push(Planned::new(finding, "would-apply", None)),
+                Ok(()) => planned.push(Planned::new(finding, "would-ask", only_here)),
+                Err(error) => {
+                    skipped = skipped.saturating_add(1);
+                    planned.push(Planned::new(finding, "would-fail", Some(error)));
+                }
+            }
             continue;
         }
         if !yes {
-            let warning = finding
-                .local_work
+            let warning = work
                 .as_ref()
                 .map(|work| format!(" (only here: {work})"))
                 .unwrap_or_default();
@@ -336,26 +486,7 @@ fn apply(config: &Config, findings: &[Finding], yes: bool) -> Result<u8> {
                 continue;
             }
         }
-        let outcome = match &finding.action {
-            Action::Archive => crate::repository_ops::remove(
-                config,
-                &crate::repository_ops::RemoveOptions {
-                    query: finding.path.to_string_lossy().into_owned(),
-                    bare: false,
-                    dry_run: false,
-                    json: false,
-                },
-            ),
-            Action::Relocate { remote } => remote
-                .as_ref()
-                .map_or(Ok(()), |(remote, url)| {
-                    process::git(&finding.path, &["remote", "set-url", "--", remote, url])
-                        .map(|_| ())
-                })
-                .and_then(|()| crate::manifest::adopt(config, &finding.path, false, false, false)),
-            Action::Review => Ok(0),
-        };
-        match outcome {
+        match execute(config, finding) {
             Ok(0) => applied = applied.saturating_add(1),
             Ok(_) => skipped = skipped.saturating_add(1),
             Err(error) => {
@@ -364,12 +495,70 @@ fn apply(config: &Config, findings: &[Finding], yes: bool) -> Result<u8> {
             }
         }
     }
+    if dry_run {
+        render_plan(config, &planned, options.json)?;
+        return Ok(if skipped == 0 { 0 } else { 3 });
+    }
     ui::note(
         "✓",
         ui::GOOD,
         &format!("{applied} fixed, {skipped} left for you"),
     );
     Ok(if skipped == 0 { 0 } else { 3 })
+}
+
+/// The planned fixes of `--fix --dry-run`, as JSON or as a short list.
+fn render_plan(config: &Config, planned: &[Planned], json: bool) -> Result<()> {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(planned).map_err(|error| error.to_string())?
+        );
+        return Ok(());
+    }
+    if planned.is_empty() {
+        return Ok(());
+    }
+    let paint = ui::Paint::stdout();
+    let mut out = format!(
+        "\n {}  {}\n",
+        paint.paint(ui::BOLD, "Planned fixes"),
+        paint.paint(ui::DIM, "dry run: nothing was changed")
+    );
+    let mut fixed = 0_usize;
+    for plan in planned {
+        let name = ui::repository_name(&plan.path, &config.roots);
+        let label = format!("{:<11}", plan.outcome.replace('-', " "));
+        let detail = match (plan.outcome, &plan.reason) {
+            ("would-apply" | "would-ask", reason) => {
+                fixed = fixed.saturating_add(1);
+                let warning = reason
+                    .as_ref()
+                    .map(|reason| format!(" ({reason})"))
+                    .unwrap_or_default();
+                format!("{}{warning}", plan.fix)
+            }
+            (_, reason) => reason.clone().unwrap_or_default(),
+        };
+        let _ = writeln!(
+            out,
+            "   {}  {}  {}",
+            paint.paint(ui::INFO, label),
+            paint.paint(ui::BOLD, name),
+            paint.paint(ui::DIM, detail),
+        );
+    }
+    let left = planned.len().saturating_sub(fixed);
+    let _ = writeln!(
+        out,
+        " {}",
+        paint.paint(
+            ui::DIM,
+            format!("{fixed} would be fixed, {left} would be left for you")
+        )
+    );
+    print!("{out}");
+    Ok(())
 }
 
 type Answers = BTreeMap<PathBuf, GitHub>;
@@ -451,6 +640,7 @@ fn findings(config: &Config, identities: &[Identity], answers: &Answers) -> Vec<
                         local_work: None,
                         action: Action::Relocate {
                             remote: Some((identity.remote.clone(), url.clone())),
+                            url,
                         },
                     });
                     continue;
@@ -492,12 +682,38 @@ fn findings(config: &Config, identities: &[Identity], answers: &Answers) -> Vec<
                 ),
                 fix: format!("repot adopt {}", quoted(&identity.path)),
                 local_work: None,
-                action: Action::Relocate { remote: None },
+                action: Action::Relocate {
+                    remote: None,
+                    url: identity.url.clone(),
+                },
             });
         }
     }
     findings.sort_by(|left, right| (left.kind, &left.path).cmp(&(right.kind, &right.path)));
     findings
+}
+
+/// What `--fix --dry-run` reports for one finding.
+#[derive(Serialize)]
+struct Planned {
+    kind: Kind,
+    path: PathBuf,
+    fix: String,
+    /// `would-apply`, `would-ask`, `would-skip` or `would-fail`.
+    outcome: &'static str,
+    reason: Option<String>,
+}
+
+impl Planned {
+    fn new(finding: &Finding, outcome: &'static str, reason: Option<String>) -> Self {
+        Self {
+            kind: finding.kind,
+            path: finding.path.clone(),
+            fix: finding.fix.clone(),
+            outcome,
+            reason,
+        }
+    }
 }
 
 fn render(findings: &[Finding], checked: usize, online: bool, json: bool) -> Result<()> {
