@@ -119,6 +119,7 @@ such as your dotfiles.
 ```sh
 repot status                  # grouped report with live progress
 repot status --json           # stable output for scripts
+repot sync .                  # only the checkout you are in
 repot sync --jobs 24 --timeout 30
 ```
 
