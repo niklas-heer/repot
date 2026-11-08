@@ -113,6 +113,57 @@ pub fn matching_paths(config: &Config, query: &str, bare: bool) -> Result<Vec<Pa
         .collect())
 }
 
+/// Whether a status or sync query names a location rather than a repository.
+pub fn is_path_query(query: &str) -> bool {
+    matches!(query, "." | "..")
+        || ["./", "../", "/", "~"]
+            .iter()
+            .any(|prefix| query.starts_with(prefix))
+}
+
+/// The checkouts a status or sync query selects. Names match exactly as
+/// `repot list <query>` does; `.`, `../x`, `~/x` or an existing directory select
+/// the checkout that contains it.
+pub fn select(config: &Config, query: &str) -> Result<Vec<PathBuf>> {
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let entries = collect(config)?;
+    if is_path_query(query) {
+        return containing_checkout(config, &entries, query);
+    }
+    let normalized = normalize_query(query, false);
+    let names: Vec<PathBuf> = entries
+        .iter()
+        .filter(|entry| matches_query(&entry.relative, &normalized, false))
+        .map(|entry| entry.path.clone())
+        .collect();
+    if names.is_empty() && Path::new(query).is_dir() {
+        return containing_checkout(config, &entries, query);
+    }
+    Ok(names)
+}
+
+fn containing_checkout(config: &Config, entries: &[Entry], query: &str) -> Result<Vec<PathBuf>> {
+    let location = if query.starts_with('~') {
+        config.expand_path(query)?
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("current directory: {error}"))?
+            .join(query)
+    };
+    let Ok(location) = location.canonicalize() else {
+        return Ok(Vec::new());
+    };
+    Ok(entries
+        .iter()
+        .filter(|entry| location.starts_with(&entry.path))
+        .max_by_key(|entry| entry.path.components().count())
+        .map(|entry| entry.path.clone())
+        .into_iter()
+        .collect())
+}
+
 fn collect(config: &Config) -> Result<Vec<Entry>> {
     let mut entries = Vec::new();
     let mut seen = BTreeSet::new();

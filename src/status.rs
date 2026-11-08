@@ -1,6 +1,7 @@
 //! Repository observations and conservative, reusable update plans.
 
-use std::collections::HashSet;
+use std::cmp::Ordering;
+use std::collections::{BTreeSet, HashSet};
 use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::io::IsTerminal;
@@ -12,6 +13,7 @@ use serde::Serialize;
 use crate::Result;
 use crate::config::{Config, remote_parts};
 use crate::discovery::{self, Repository};
+use crate::ghq_listing;
 use crate::github;
 use crate::process;
 use crate::ui;
@@ -21,6 +23,14 @@ pub struct Options {
     pub jobs: usize,
     pub timeout: Duration,
     pub no_fetch: bool,
+}
+
+/// Which repositories a run covers and how much of them the terminal shows.
+pub struct Scope<'a> {
+    /// Empty selects every repository; otherwise each query must match one.
+    pub queries: &'a [String],
+    /// List every up-to-date repository instead of a summary.
+    pub verbose: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -97,8 +107,45 @@ impl Report {
     }
 }
 
-pub fn run(config: &Config, options: &Options) -> Result<u8> {
+/// The repositories the queries select, found before anything is fetched. An
+/// unmatched query is reported and yields `None`, so the caller exits with
+/// invalid usage and changes nothing.
+pub fn select(config: &Config, queries: &[String]) -> Result<Option<Vec<Repository>>> {
+    let repositories = discovery::discover(config)?;
+    if queries.is_empty() {
+        return Ok(Some(repositories));
+    }
+    let known: BTreeSet<&PathBuf> = repositories.iter().map(|repo| &repo.path).collect();
+    let mut wanted = BTreeSet::new();
+    for query in queries {
+        let matches: Vec<PathBuf> = ghq_listing::select(config, query)?
+            .into_iter()
+            .filter(|path| known.contains(path))
+            .collect();
+        if matches.is_empty() {
+            let hint = if ghq_listing::is_path_query(query) {
+                "run it inside a checkout, or name the repository"
+            } else {
+                "run repot list to see repository names"
+            };
+            ui::error(&format!("no repository matches {query:?}; {hint}"));
+            return Ok(None);
+        }
+        wanted.extend(matches);
+    }
+    Ok(Some(
+        repositories
+            .into_iter()
+            .filter(|repo| wanted.contains(&repo.path))
+            .collect(),
+    ))
+}
+
+pub fn run(config: &Config, options: &Options, scope: &Scope<'_>) -> Result<u8> {
     let started = std::time::Instant::now();
+    let Some(repositories) = select(config, scope.queries)? else {
+        return Ok(2);
+    };
     let reports = {
         let progress = (!options.json).then(|| {
             ui::Progress::start(
@@ -110,7 +157,7 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
                 0,
             )
         });
-        collect(config, options, progress.as_ref(), None)?
+        collect(config, options, progress.as_ref(), None, &repositories)?
     };
     let code = render(
         &reports,
@@ -123,6 +170,7 @@ pub fn run(config: &Config, options: &Options) -> Result<u8> {
                 Mode::Status
             },
             elapsed: started.elapsed(),
+            verbose: scope.verbose,
         },
     )?;
     if !options.json
@@ -153,8 +201,8 @@ pub fn collect(
     options: &Options,
     progress: Option<&ui::Progress>,
     finish: Option<Finish<'_>>,
+    repositories: &[Repository],
 ) -> Result<Vec<Report>> {
-    let repositories = discovery::discover(config)?;
     if let Some(progress) = progress {
         progress.phase(
             match (options.no_fetch, finish.is_some()) {
@@ -168,7 +216,7 @@ pub fn collect(
     // One batched GitHub query tells which checkouts are already current.
     // Checkouts GitHub cannot answer for go first, so their fetches overlap
     // with the query; the others wait for its answers.
-    let survey = (!options.no_fetch).then(|| github::Survey::prepare(&repositories, options.jobs));
+    let survey = (!options.no_fetch).then(|| github::Survey::prepare(repositories, options.jobs));
     let mut order: Vec<&Repository> = repositories.iter().collect();
     if let Some(survey) = &survey {
         order.sort_by_key(|repo| survey.asks_about(&repo.path));
@@ -248,6 +296,7 @@ pub struct View<'a> {
     pub roots: &'a [PathBuf],
     pub mode: Mode,
     pub elapsed: Duration,
+    pub verbose: bool,
 }
 
 pub fn render(reports: &[Report], json: bool, view: &View<'_>) -> Result<u8> {
@@ -436,6 +485,11 @@ fn hint(report: &Report) -> Option<String> {
     }
 }
 
+/// Above this many up-to-date repositories, the terminal shows only a preview.
+const COMPACT_ABOVE: usize = 24;
+/// How many names the compact preview shows, in natural order.
+const COMPACT_PREVIEW: usize = 8;
+
 /// Healthy checkouts are summarised by owner so attention goes where it is needed.
 fn clean_summary(
     out: &mut String,
@@ -443,11 +497,24 @@ fn clean_summary(
     names: &[String],
     columns: usize,
     paint: ui::Paint,
+    verbose: bool,
 ) {
+    let mut listed: Vec<&str> = members
+        .iter()
+        .filter_map(|index| names.get(*index))
+        .map(String::as_str)
+        .collect();
+    listed.sort_by(|left, right| ui::natural_cmp(left, right));
+    let shown = if verbose || listed.len() <= COMPACT_ABOVE {
+        listed.len()
+    } else {
+        COMPACT_PREVIEW
+    };
+    let hidden = listed.len().saturating_sub(shown);
     let mut owners: Vec<(String, Vec<String>)> = Vec::new();
-    for name in members.iter().filter_map(|index| names.get(*index)) {
+    for name in listed.into_iter().take(shown) {
         let (owner, leaf) = name.rsplit_once('/').map_or_else(
-            || (String::new(), name.clone()),
+            || (String::new(), name.to_owned()),
             |(owner, leaf)| (format!("{owner}/"), leaf.to_owned()),
         );
         match owners.last_mut() {
@@ -480,6 +547,10 @@ fn clean_summary(
         }
     }
     let _ = writeln!(out, "{line}");
+    if hidden > 0 {
+        let more = format!("… and {hidden} more (use --verbose to list all)");
+        let _ = writeln!(out, "   {}", paint.paint(ui::DIM, more));
+    }
     out.push('\n');
 }
 
@@ -572,13 +643,18 @@ fn terminal_report(reports: &[Report], view: &View<'_>) -> String {
     groups.sort_unstable();
     groups.dedup();
     for group in groups {
-        let members: Vec<usize> = (0..reports.len())
+        let mut members: Vec<usize> = (0..reports.len())
             .filter(|index| {
                 reports
                     .get(*index)
                     .is_some_and(|report| Group::of(report) == group)
             })
             .collect();
+        // Natural order, so repo2 comes before repo10 whatever the path order.
+        members.sort_by(|left, right| match (names.get(*left), names.get(*right)) {
+            (Some(left), Some(right)) => ui::natural_cmp(left, right),
+            _ => Ordering::Equal,
+        });
         let (symbol, title, style) = group.heading(view.mode);
         let advice = group
             .advice()
@@ -592,7 +668,7 @@ fn terminal_report(reports: &[Report], view: &View<'_>) -> String {
             paint.paint(ui::DIM, members.len())
         );
         if group == Group::Clean {
-            clean_summary(&mut out, &members, &names, columns, paint);
+            clean_summary(&mut out, &members, &names, columns, paint, view.verbose);
             continue;
         }
         for index in members {
@@ -619,6 +695,97 @@ fn terminal_report(reports: &[Report], view: &View<'_>) -> String {
     }
     footer(&mut out, reports, view, paint);
     out
+}
+
+#[cfg(test)]
+mod render_tests {
+    use super::*;
+
+    fn with_action(name: &str, state: &str, action: &str) -> Report {
+        let mut report = Report::empty(Path::new(&format!("/root/github.com/{name}")));
+        state.clone_into(&mut report.state);
+        action.clone_into(&mut report.action);
+        report
+    }
+
+    fn plain(text: &str) -> String {
+        let mut plain = String::new();
+        let mut escaped = false;
+        for character in text.chars() {
+            if escaped {
+                escaped = character != 'm';
+            } else if character == '\u{1b}' {
+                escaped = true;
+            } else {
+                plain.push(character);
+            }
+        }
+        plain
+    }
+
+    fn render_terminal(reports: &[Report], verbose: bool) -> String {
+        let roots = [PathBuf::from("/root")];
+        let view = View {
+            roots: &roots,
+            mode: Mode::Status,
+            elapsed: Duration::from_millis(5),
+            verbose,
+        };
+        plain(&terminal_report(reports, &view))
+    }
+
+    /// The `ownerN/repoM` numbers in the order they are listed.
+    fn listed_numbers(text: &str) -> Vec<u32> {
+        text.split_whitespace()
+            .filter_map(|token| {
+                token
+                    .trim_start_matches("owner/")
+                    .strip_prefix("repo")
+                    .and_then(|number| number.parse().ok())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn healthy_group_is_previewed_in_natural_order_unless_verbose() {
+        let reports: Vec<Report> = (1..=200)
+            .map(|number| with_action(&format!("owner/repo{number}"), "synced", "none"))
+            .collect();
+        let compact = render_terminal(&reports, false);
+        assert!(compact.contains("Up to date  200"), "{compact}");
+        assert!(
+            compact.contains("… and 192 more (use --verbose to list all)"),
+            "{compact}"
+        );
+        assert_eq!(listed_numbers(&compact), (1..=8).collect::<Vec<_>>());
+
+        let verbose = render_terminal(&reports, true);
+        assert!(!verbose.contains("use --verbose"), "{verbose}");
+        assert_eq!(listed_numbers(&verbose), (1..=200).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn small_healthy_groups_list_every_name_naturally() {
+        let reports: Vec<Report> = [10, 2, 1, 9]
+            .into_iter()
+            .map(|number| with_action(&format!("owner/repo{number}"), "synced", "none"))
+            .collect();
+        let text = render_terminal(&reports, false);
+        assert!(!text.contains("more (use --verbose"), "{text}");
+        assert_eq!(listed_numbers(&text), vec![1, 2, 9, 10]);
+    }
+
+    #[test]
+    fn attention_groups_are_listed_in_natural_order() {
+        let reports = [
+            with_action("owner/repo10", "diverged", "review"),
+            with_action("owner/repo2", "diverged", "review"),
+        ];
+        let text = render_terminal(&reports, false);
+        let second = text.find("owner/repo2").expect("repo2 listed");
+        let tenth = text.find("owner/repo10").expect("repo10 listed");
+        assert!(second < tenth, "{text}");
+    }
 }
 
 pub fn probe(path: &Path, args: &[&str], timeout: Duration) -> Result<Option<String>> {

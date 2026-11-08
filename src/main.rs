@@ -91,7 +91,7 @@ enum Commands {
         #[arg(long)]
         all: bool,
     },
-    /// Fetch every repository and show what needs attention.
+    /// Fetch every repository (or those QUERY selects) and show what needs attention.
     Status {
         #[command(flatten)]
         inspection: Inspection,
@@ -99,7 +99,8 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Fast-forward safe checkouts and return merged branches to the default branch.
+    /// Fast-forward safe checkouts (or those QUERY selects) and return merged
+    /// branches to the default branch.
     Sync {
         #[command(flatten)]
         inspection: Inspection,
@@ -233,6 +234,13 @@ struct Inspection {
     /// Inspect cached remote refs without fetching.
     #[arg(long)]
     no_fetch: bool,
+    /// List every up-to-date repository instead of a summary.
+    #[arg(long)]
+    verbose: bool,
+    /// Repositories to include: part of a name as in `repot list`, or `.` (or a
+    /// path) for the checkout containing it. Every repository when omitted.
+    #[arg(value_name = "QUERY")]
+    queries: Vec<String>,
 }
 
 impl Inspection {
@@ -242,6 +250,13 @@ impl Inspection {
             jobs: usize::from(self.jobs),
             timeout: std::time::Duration::from_secs(self.timeout),
             no_fetch: self.no_fetch,
+        }
+    }
+
+    fn scope(&self) -> status::Scope<'_> {
+        status::Scope {
+            queries: &self.queries,
+            verbose: self.verbose,
         }
     }
 }
@@ -318,13 +333,13 @@ fn run(cli: Cli) -> Result<u8> {
                     "dry run: inspecting cached remote refs; nothing is fetched or changed",
                 );
             }
-            return status::run(&config, &options);
+            return status::run(&config, &options, &inspection.scope());
         }
         Commands::Sync {
             inspection,
             dry_run,
         } => {
-            return sync::run(&config, &inspection.options(), dry_run);
+            return sync::run(&config, &inspection.options(), dry_run, &inspection.scope());
         }
         Commands::Clone(options) => return get::run(&config, &options),
         Commands::New {

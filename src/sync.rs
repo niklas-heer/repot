@@ -5,8 +5,16 @@ use crate::config::Config;
 use crate::status::{self, Options, Report};
 use crate::ui;
 
-pub fn run(config: &Config, options: &Options, dry_run: bool) -> Result<u8> {
+pub fn run(
+    config: &Config,
+    options: &Options,
+    dry_run: bool,
+    scope: &status::Scope<'_>,
+) -> Result<u8> {
     let started = std::time::Instant::now();
+    let Some(repositories) = status::select(config, scope.queries)? else {
+        return Ok(2);
+    };
     let effective = Options {
         json: options.json,
         jobs: options.jobs,
@@ -35,6 +43,7 @@ pub fn run(config: &Config, options: &Options, dry_run: bool) -> Result<u8> {
             &effective,
             progress.as_ref(),
             (!dry_run).then_some(finish),
+            &repositories,
         )?
     };
     status::render(
@@ -48,6 +57,7 @@ pub fn run(config: &Config, options: &Options, dry_run: bool) -> Result<u8> {
                 status::Mode::Sync
             },
             elapsed: started.elapsed(),
+            verbose: scope.verbose,
         },
     )
 }

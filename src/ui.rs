@@ -3,9 +3,12 @@
 //! Machine-readable output (`--json`, piped plain text) never goes through the
 //! styling here, and progress only ever appears on an interactive stderr.
 
+use std::cmp;
 use std::fmt::{Display, Write as _};
 use std::io::{IsTerminal, Write};
+use std::iter::Peekable;
 use std::path::Path;
+use std::str::Chars;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
@@ -92,6 +95,53 @@ pub fn visible(value: &str) -> String {
             }
         })
         .collect()
+}
+
+/// Order names so that `repo2` precedes `repo10`, ignoring letter case. Ties
+/// fall back to byte order, so the result is a total, deterministic order.
+pub fn natural_cmp(left: &str, right: &str) -> cmp::Ordering {
+    let mut left_chars = left.chars().peekable();
+    let mut right_chars = right.chars().peekable();
+    loop {
+        match (left_chars.peek().copied(), right_chars.peek().copied()) {
+            (None, None) => return left.cmp(right),
+            (None, Some(_)) => return cmp::Ordering::Less,
+            (Some(_), None) => return cmp::Ordering::Greater,
+            (Some(a), Some(b)) if a.is_ascii_digit() && b.is_ascii_digit() => {
+                let a_digits = take_digits(&mut left_chars);
+                let b_digits = take_digits(&mut right_chars);
+                let a_digits = a_digits.trim_start_matches('0');
+                let b_digits = b_digits.trim_start_matches('0');
+                match a_digits
+                    .len()
+                    .cmp(&b_digits.len())
+                    .then_with(|| a_digits.cmp(b_digits))
+                {
+                    cmp::Ordering::Equal => {}
+                    other => return other,
+                }
+            }
+            (Some(a), Some(b)) => {
+                let ordering = a
+                    .to_lowercase()
+                    .collect::<String>()
+                    .cmp(&b.to_lowercase().collect::<String>());
+                if ordering != cmp::Ordering::Equal {
+                    return ordering;
+                }
+                left_chars.next();
+                right_chars.next();
+            }
+        }
+    }
+}
+
+fn take_digits(chars: &mut Peekable<Chars<'_>>) -> String {
+    let mut digits = String::new();
+    while let Some(digit) = chars.next_if(char::is_ascii_digit) {
+        digits.push(digit);
+    }
+    digits
 }
 
 pub fn width(text: &str) -> usize {
@@ -310,5 +360,28 @@ fn spin(state: &ProgressState) {
             "\r{}\r",
             " ".repeat(drawn.saturating_add(1))
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::natural_cmp;
+    use std::cmp::Ordering;
+
+    #[test]
+    fn numbers_sort_by_value_and_letters_ignore_case() {
+        let mut names = vec![
+            "repo10", "Repo2", "repo1", "alpha", "repo02", "repo9b", "repo9a",
+        ];
+        names.sort_by(|left, right| natural_cmp(left, right));
+        assert_eq!(
+            names,
+            [
+                "alpha", "repo1", "Repo2", "repo02", "repo9a", "repo9b", "repo10"
+            ]
+        );
+        assert_eq!(natural_cmp("a/b", "a/b"), Ordering::Equal);
+        assert_eq!(natural_cmp("x1", "X2"), Ordering::Less);
+        assert_eq!(natural_cmp("Repo2", "repo2"), Ordering::Less);
     }
 }
